@@ -20,27 +20,49 @@
 
 ## 2. 主要機能（7つの柱）
 
-### ① AI ロールプレイ会話（音声）
+### ① リアルタイム多人数音声会話（割り込み可）
+
+**マイクをずっと ON にした状態の自然な会話**。録音ボタンは不要。AI の話の途中で割り込んでもOK。複数の AI キャラが登場し、AI 同士が会話して時々ユーザーに話を振る。
 
 ```
-ユーザー: 「シチュエーション: カフェで店員に注文」と指示
+ユーザー: 「会社の会議シミュレーションをしたい。私は新入社員役」と指示
         │
         ▼
-AI が動的にロールプレイの設定を生成
-   - キャラ設定（フレンドリーなバリスタ）
-   - 最初のセリフ（"Welcome! What would you like today?"）
+AI: 動的に登場人物を生成
+   - Sarah (マネージャー、声: alloy)
+   - Mike (エンジニア、声: echo)
+   - ユーザー (新入社員)
         │
         ▼
-ユーザーがマイクで応答
+[常時マイクON で会話開始]
+Sarah: "Mike, what's the status on the new feature?"
+Mike:  "It's about 80% done. There's an edge case I'm still..."
+                                  ↑
+                            ユーザーが話し始める
+                                  ↓
+[Mike の発話、割り込みで自動停止]
+ユーザー: "Sorry, can I ask about the timeline?"
         │
         ▼
-AI が次の自然な応答を返す
+オーケストレーターが「次に誰が話すか」を判断
+        │
+Sarah: "Sure, the deadline is Friday. Mike, can you explain the risks?"
+Mike:  "The main concern is..."
+   ...
+Sarah: "And [user-name], do you have any concerns from the QA side?"
+                                  ↑
+                       AI が自然にユーザーへ話を振る
         │
         ▼
-（無限ループ）
+ユーザーが応答 → 会話継続
 ```
 
-ユーザーは **テンプレートを選ばずに**、好きなシチュエーションをテキストで指示するだけ。AI が状況・キャラ・展開を作る。
+**他のアプリにない 3つの特長**:
+- ✅ **マイクON常時**：ボタン押下不要、ストレスフリー
+- ✅ **割り込み可（barge-in）**：AI の発話途中で遮れる、人間の会話に近い
+- ✅ **多人数AI**：AI 同士が会話、自然にユーザーに振る → **会議・面接・グループディスカッションの真のシミュレーション**
+
+技術的には **OpenAI Realtime API** + **マルチエージェント・オーケストレーター** で実現。
 
 ### ② 文法・表現の自動訂正
 
@@ -189,26 +211,35 @@ AI: 提出された内容を読み込んで質問プランを生成
 ┌────────────────────────────────────────────────────┐
 │  フロントエンド: React + Vite                       │
 │                                                     │
-│  - ロールプレイ画面                                  │
-│  - マイク入力 (MediaRecorder API)                   │
-│  - AI 応答の音声再生 (Audio API)                    │
+│  - ロールプレイ画面 + 登場人物カード                  │
+│  - マイク常時ON (getUserMedia + WebRTC)             │
+│  - AI 音声のストリーミング再生                       │
+│  - 割り込み検出 (VAD: Voice Activity Detection)     │
 │  - 訂正・採点・解説のオーバーレイ表示                │
 │  - 日本語→英訳ヒント入力欄                          │
 └─────────────────┬──────────────────────────────────┘
-                  │ HTTPS / WebSocket
+                  │ WebSocket / WebRTC
                   │
 ┌─────────────────▼──────────────────────────────────┐
 │  バックエンド: Python + FastAPI                     │
 │                                                     │
-│  /api/start_scenario  シナリオ生成                  │
-│  /api/turn            会話1ターンの処理              │
-│      ├─ Whisper API   音声→テキスト                 │
-│      ├─ GPT-5         文法訂正 + 次の応答生成        │
-│      ├─ Azure Speech  音素採点                      │
-│      └─ OpenAI TTS    AI応答の音声化                │
+│  /ws/conversation   会話セッションのストリーミング   │
+│      ├─ OpenAI Realtime API ← 中核                  │
+│      │     - 音声入出力ストリーム                     │
+│      │     - 割り込み制御 (barge-in)                 │
+│      │     - 低遅延                                   │
+│      ├─ オーケストレーター (Python)                   │
+│      │     - 複数の AI ペルソナを管理                 │
+│      │     - 「次に誰が話すか」を判断                  │
+│      │     - ユーザー発話時の応答者を選択              │
+│      ├─ Azure Speech ← 音素採点 (ターン終了時に発動)  │
+│      └─ GPT-5 ← 訂正・解説・ヒント (非同期)           │
+│                                                     │
 │  /api/explain         文単位の解説                  │
 │  /api/hint            日本語→英訳ヒント             │
 │  /api/word_audio      単語の発音再生用              │
+│  /api/interview_start  レジュメ→面接プラン生成      │
+│  /api/interview_report 面接終了後フィードバック     │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -282,34 +313,38 @@ mingo/
 
 ---
 
-## 6. 通信フロー例（1ターン）
+## 6. 通信フロー例（リアルタイム多人数会話）
 
 ```
-[1] ユーザー: マイクで発話 "I want one coffee please"
+[セッション開始]
+[1] frontend が WebSocket で /ws/conversation に接続
+[2] backend が OpenAI Realtime API へ接続、システムプロンプトを設定
+    (登場人物・シナリオ・割り込み許可フラグ)
+[3] backend が Sarah (AI_1) の最初のセリフを生成 → 音声ストリーム開始
+[4] frontend が音声を順次再生
+
+[会話の継続]
+Sarah が話し中、Mike (AI_2) も話す番を待つ
    │
-   ▼
-[2] frontend: 音声データ (Blob) を /api/turn に POST
-   │
-   ▼
-[3] backend (/api/turn):
-   ├─ ① Whisper       → "I want one coffee please"
-   ├─ ② GPT-5 (訂正)  → "Could I have one coffee, please?"
-   ├─ ③ Azure Speech  → 音素スコア + IPA 差分
-   ├─ ④ GPT-5 (応答生成) → "Sure! Anything else for you today?"
-   └─ ⑤ OpenAI TTS    → 応答音声 (mp3)
-   │
-   ▼
-[4] レスポンス JSON:
-   {
-     transcript: "I want one coffee please",
-     correction: { ... },
-     pronunciation: { phonemes: [...], advice: "..." },
-     ai_reply_text: "Sure! Anything else for you today?",
-     ai_reply_audio_url: "/audio/xxx.mp3"
-   }
-   │
-   ▼
-[5] frontend: 訂正カード + 音素グラフ + AI応答を画面に追加 → 音声再生
+   ▼ オーケストレーター: Sarah → Mike へバトン
+Mike が応答を生成 → 音声ストリーム
+
+[ユーザーの割り込み]
+[5] frontend の VAD がユーザーの発話を検出
+[6] frontend が backend へ「割り込み開始」通知
+[7] backend が Realtime API へ "cancel" を送信 → AI 発話即停止
+[8] ユーザーの音声がストリームで backend に流れる
+   ├─ Realtime API が音声→テキストへリアルタイム変換
+   ├─ オーケストレーターが「ユーザーに最後に話しかけたのは誰か」を確認
+   └─ そのキャラが応答を生成
+[9] AI 応答が音声ストリームで返り、frontend で再生
+
+[非同期処理: 訂正・採点]
+[10] ユーザーの発話が完了したらバックグラウンドで:
+     - GPT-5: 文法・表現の訂正生成
+     - Azure Speech: 音素スコア計算
+[11] 結果を WebSocket でフロントへ push
+[12] frontend がオーバーレイで表示（会話は止めない）
 ```
 
 ---
@@ -322,9 +357,10 @@ mingo/
 
 | Step | 内容 | 状態 |
 | --- | --- | --- |
-| **準備** | フォルダ作成、Vite + React + FastAPI のひな型 | ⬜ |
-| **Step 1** | **音声会話の最小ループ** を実装：マイク録音 → Whisper → GPT 応答 → TTS 再生。シナリオは固定文字列で OK | ⬜ |
-| **Step 2** | **シナリオ動的生成**：ユーザーが「カフェで注文」のようなお題をテキストで指示 → AI が状況・キャラ・最初のセリフを生成 | ⬜ |
+| **準備** | フォルダ作成、Vite + React + FastAPI のひな型、OpenAI Realtime API のアクセス確認 | ⬜ |
+| **Step 1** | **1対1のリアルタイム音声会話** を実装：OpenAI Realtime API + WebSocket で、マイク常時ON + AI 応答音声ストリーム + 割り込み (barge-in) 対応。シナリオは固定文字列で OK | ⬜ |
+| **Step 2** | **多人数AIオーケストレーター**：複数の AI ペルソナ（声・性格が違うキャラ）を作成し、「次に誰が話すか」を判断するロジックを実装。AI 同士の会話 + ユーザーへの自然な振り出しを実現 | ⬜ |
+| **Step 2.5** | **シナリオ動的生成**：ユーザーが「会社の会議」「カフェで注文」のようなお題をテキストで指示 → AI が登場人物・状況・最初のセリフを生成 | ⬜ |
 | **Step 3** | **文法・表現の訂正機能**：ユーザー発話を GPT に渡し、自然さと文法をチェック → 訂正版を画面表示 | ⬜ |
 | **Step 4** | **AI 発言の文単位解説**：AI 発言をクリックすると、訳・文法・イディオム・類似表現・発音注意までセクション分けで表示 | ⬜ |
 | **Step 5** | **日本語 → 英語ヒント**：テキスト入力で日本語の言いたいことを書く → GPT が複数の英訳案 + 文法・イディオム解説を返す | ⬜ |
@@ -360,9 +396,10 @@ mingo/
 
 | サービス | 用途 | 備考 |
 | --- | --- | --- |
-| **OpenAI Whisper API** (`whisper-1`) | 音声→テキスト | OpenAI API キー |
-| **OpenAI GPT-5** | 訂正・応答生成・解説・英訳ヒント | 同上 |
-| **OpenAI TTS** (`tts-1` / `tts-1-hd`) | AI応答の音声化、単語発音 | 同上 |
+| **OpenAI Realtime API** (`gpt-realtime` 系) | リアルタイム音声会話の中核：常時マイクON / 割り込み (barge-in) / 低遅延ストリーミング音声入出力 / 複数声切替 | OpenAI API キー。Step 1 から必須。**Realtime は他APIより高コスト**（数倍）なので、Step 8 移行時にキャッシュ・最適化重要 |
+| **OpenAI Whisper API** (`whisper-1`) | 単独の音声→テキスト（Realtime 範囲外の用途、例：ユーザー発話の事後解析） | OpenAI API キー |
+| **OpenAI GPT-5** | 訂正・解説・英訳ヒント・オーケストレーター判断・面接質問プラン | 同上 |
+| **OpenAI TTS** (`tts-1` / `tts-1-hd`) | 単語クリック発音、面接フィードバック朗読など Realtime 範囲外 | 同上 |
 | **OpenAI GPT-5-audio** (`gpt-5-audio` 系) | 発音の定性評価（リンキング等） | 同上 |
 | **Azure AI Speech** (Pronunciation Assessment) | 音素レベルスコアリング、正解IPA、Fluency/Accuracy/Completeness | 別途 Azure サブスクリプション。月 5 時間まで無料枠あり |
 | **FastAPI / Uvicorn** | バックエンドサーバー | OSS（無料） |

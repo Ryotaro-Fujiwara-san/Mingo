@@ -2,7 +2,7 @@
 
 ## 1. 製品概要
 
-Mingo は、**AI との自然な会話**を通じて実践的なスピーキング力を鍛える英語（多言語）学習プロダクト。
+Mingo は、**AI との自然な会話**を通じて実践的なスピーキング力を鍛える英語学習プロダクト（多言語対応は MVP 後回し、§3.8 参照）。
 
 ボタン操作を起点としない自然なターンテイキングと、その場での文法・発音フィードバックにより、「会議で発言できない」「面接が怖い」といった**実戦に近いプレッシャー下での発話**を安全に練習できる。相手 AI のパーソナリティや状況を細かく設定できるため、面接・会議・交渉などシーンに合わせた会話練習が可能。
 
@@ -164,6 +164,8 @@ MVP で勝負する軸（順に優先）:
 
 ## 8. ファイル構成（予定）
 
+MVP（フェーズ1）で実装するファイルのみ。後回し機能用のファイルは下の「後回し」サブセクション参照。
+
 ```
 mingo/
 │
@@ -177,9 +179,6 @@ mingo/
 │   │   │   ├── HighlightWord.tsx         ハイライト単語（赤字制御）
 │   │   │   ├── CorrectionCard.tsx        文法訂正表示
 │   │   │   ├── PronunciationView.tsx     音素スコア表示
-│   │   │   ├── ExplainPopup.tsx          深掘り解説          [後回し]
-│   │   │   ├── HintBox.tsx               日本語→英訳ヒント   [後回し]
-│   │   │   ├── WordTooltip.tsx           単語タップ発音       [後回し]
 │   │   │   └── RoleConfigPanel.tsx       ロールプレイ設定
 │   │   ├── hooks/
 │   │   │   ├── useRealtimeSession.ts     Realtime API 接続
@@ -194,7 +193,7 @@ mingo/
 ├── backend/                        # Python FastAPI
 │   ├── main.py                     FastAPI エントリ + ルーティング
 │   ├── conversation.py             Realtime API 仲介
-│   ├── feedback.py                 訂正・解説・ヒント
+│   ├── feedback.py                 文法訂正
 │   ├── pronunciation.py            Azure Speech 連携
 │   ├── highlight.py                ハイライト習得ロジック
 │   ├── prompts.py                  プロンプトテンプレート集
@@ -204,6 +203,19 @@ mingo/
 │
 ├── README.md
 └── .gitignore
+```
+
+### 8.1 後回し（MVP後に追加予定）
+
+```
+frontend/src/components/
+    ExplainPopup.tsx          深掘り解説（→ §3.6）
+    HintBox.tsx               日本語→英訳ヒント（→ §3.6）
+    WordTooltip.tsx           単語タップ発音（→ §3.7）
+
+backend/feedback.py に追加予定の関数:
+    explain()                 深掘り解説生成
+    hint()                    日本語→英訳ヒント生成
 ```
 
 ---
@@ -300,8 +312,8 @@ mingo/
 | サービス | 用途 | 備考 |
 | --- | --- | --- |
 | **OpenAI Realtime API** (`gpt-realtime` 系) | 会話の中核（常時マイク ON / 割り込み / 低遅延ストリーミング音声入出力） | OpenAI API キー。**Step 1 から必須**。Realtime はトークン単価が高め、Step 7 でキャッシュ・最適化を要検討 |
-| **OpenAI GPT-5** | 文法訂正・深掘り解説・英訳ヒント・ハイライト用プロンプト合成 | 同上 |
-| **OpenAI TTS** (`tts-1-hd`) | 単語タップ発音、リピート再生用 | 同上 |
+| **OpenAI GPT-5** | 文法訂正・ハイライト用プロンプト合成（深掘り解説・英訳ヒントは MVP 後回し） | 同上 |
+| **OpenAI TTS** (`tts-1-hd`) | 単語タップ発音用（MVP 後回し）。MVP のリピート再生は Realtime API の音声を再利用するため TTS 不要 | 同上 |
 | **Azure AI Speech** (Pronunciation Assessment) | 音素レベルスコアリング、正解 IPA、Fluency / Accuracy / Completeness | 別途 Azure サブスクリプション。月 5 時間まで無料枠あり |
 | **FastAPI / Uvicorn** | バックエンドサーバー | OSS（無料） |
 | **React + Vite** | フロントエンド | OSS（無料） |

@@ -30,9 +30,10 @@ Mingo は、**AI との自然な会話**を通じて実践的なスピーキン�
 - ボタンを押さずに会話が始まり・続く、自然なターンテイキングを実現する。
 
 ### 3.3 その場フィードバック
-- **文法**：ユーザーの発言に誤りがあれば、訂正文を表示する。
-- **発音・リンキング**：発音やリンキング（音のつながり）が不自然な場合、何がどうおかしいかを解説文で提示する。
-- 発音は音素ごとに 0〜100 で採点する（精度評価）。
+- **文法**：ユーザーの発言に誤りがあれば、GPT-5 で訂正文を生成し表示する。
+- **発音**：Azure AI Speech (Pronunciation Assessment) で音素ごとに 0〜100 で採点する（Accuracy / Fluency / Completeness / Prosody）。
+- **リンキング**：Azure には専用の「linking 評価」指標はないが、Prosody の **Unexpected break / Missing break / Monotone** エラータイプを使って単語の繋ぎ不全を検出できる。Azure の数値・エラー出力を **GPT-5 に渡して自然言語コメントに変換**し、「`would have` をネイティブは /wʊdəv/ のように繋げます」といった解説文を提示する二段構成とする。
+- ※ Azure の Prosody / Content スコアは **en-US ロケールのみ**。他言語対応（後回し）時に別途検討。
 
 ### 3.4 ロールプレイ設定
 - 相手 AI の**パーソナリティ・状況を細かくカスタマイズ**できる。
@@ -128,8 +129,10 @@ MVP で勝負する軸（順に優先）:
 │      │     - 音声入出力ストリーム                     │
 │      │     - 割り込み制御 (barge-in)                 │
 │      │     - 低遅延 (~500ms)                         │
-│      ├─ Azure AI Speech（音素採点・ターン後に発動）  │
-│      └─ GPT-5（訂正、解説/英訳ヒントは後回し、非同期）│
+│      ├─ Azure AI Speech（音素+Prosody+break エラー）  │
+│      │     ※ ターン後に発動、自然言語化はしない        │
+│      └─ GPT-5（文法訂正 + 発音/linking 自然言語化、    │
+│                解説/英訳ヒントは後回し、非同期）        │
 │                                                     │
 │  /api/explain          AI 発言の深掘り解説  [後回し] │
 │  /api/hint             日本語→英訳ヒント   [後回し] │
@@ -263,7 +266,7 @@ backend/feedback.py に追加予定の関数:
 | **Step 3** | **ロールプレイ設定 UI**：AI のパーソナリティ・状況・シーンを自由入力。設定がシステムプロンプトに反映される | ⬜ |
 | **Step 4** | **文法訂正のオーバーレイ表示**：ユーザー発話完了時に GPT-5 へ送り、訂正カードを画面に追加 | ⬜ |
 | **Step 5** | **ハイライト習得システム**：単語選択 → 赤字化 → AI 発話に組み込み → 使用検出 → 段階的フェードアウト。習得判定ロジックを §5-1 の検討結果に基づき実装 | ⬜ |
-| **Step 6** | **音素レベル発音採点**：Azure AI Speech (Pronunciation Assessment) で各音素 0〜100 + 正解 IPA + linking の不自然さ検出 | ⬜ |
+| **Step 6** | **音素レベル発音採点 + リンキング自然言語コメント**：Azure AI Speech で各音素 0〜100、Prosody、Unexpected/Missing break エラーを取得 → GPT-5 に渡して「ここはネイティブは /wʊdəv/ のように繋げます」等の自然言語コメントを生成する二段構成 | ⬜ |
 | **Step 7** | UX ポリッシュ・レイテンシ最適化・リピート再生機能 | ⬜ |
 
 ### フェーズ2: 製品化（マルチユーザー対応）
@@ -305,9 +308,9 @@ backend/feedback.py に追加予定の関数:
 | サービス | 用途 | 備考 |
 | --- | --- | --- |
 | **OpenAI Realtime API** (`gpt-realtime` 系) | 会話の中核（常時マイク ON / 割り込み / 低遅延ストリーミング音声入出力） | OpenAI API キー。**Step 1 から必須**。Realtime はトークン単価が高め、Step 7 でキャッシュ・最適化を要検討 |
-| **OpenAI GPT-5** | 文法訂正・ハイライト用プロンプト合成（深掘り解説・英訳ヒントは MVP 後回し） | 同上 |
+| **OpenAI GPT-5** | 文法訂正・発音/linking の自然言語コメント生成・ハイライト用プロンプト合成（深掘り解説・英訳ヒントは MVP 後回し） | 同上 |
 | **OpenAI TTS** (`tts-1-hd`) | 単語タップ発音用（MVP 後回し）。MVP のリピート再生は Realtime API の音声を再利用するため TTS 不要 | 同上 |
-| **Azure AI Speech** (Pronunciation Assessment) | 音素レベルスコアリング、正解 IPA、Fluency / Accuracy / Completeness | 別途 Azure サブスクリプション。月 5 時間まで無料枠あり |
+| **Azure AI Speech** (Pronunciation Assessment) | 音素レベル Accuracy、Fluency / Completeness / Prosody、Unexpected/Missing break エラー検出（自然言語コメントは GPT-5 で生成する前段データ）。Prosody は en-US ロケールのみ | 別途 Azure サブスクリプション。月 5 時間まで無料枠あり |
 | **FastAPI / Uvicorn** | バックエンドサーバー | OSS（無料） |
 | **React + Vite** | フロントエンド | OSS（無料） |
 

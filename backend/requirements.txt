@@ -1,0 +1,12 @@
+# Web フレームワーク + ASGI サーバー
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# .env ファイル読み込み
+python-dotenv>=1.0.0
+
+# OpenAI API (後で使う)
+openai>=1.50.0
+
+# WebSocket クライアント (Realtime API 用、後で使う)
+websockets>=13.0

@@ -1,6 +1,34 @@
-import { useState } from 'react'//画面に状態を保存させたいため、useStateでその変化する情報をReactに覚えさせる道具を取り出す
+import { useState, useRef } from 'react'//useState=画面に出す値の箱／useRef=画面に出さない裏方の箱
 
-function App() {//画面一個分の部品であり、この関数が返した見た目がそのまま画面になる。
+
+// ===== 音声変換の道具（部品なので、画面の部品(App)の外に置く）=====
+
+// マイクの音(Float32) → 16bitのPCM → base64文字 に変換（OpenAIへ送る形）
+function floatToBase64(float32: Float32Array) {
+  const int16 = new Int16Array(float32.length)//16bit整数を入れる箱
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]))//-1〜1の範囲に収める
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff//小数を16bit整数(-32768〜32767)に変換
+  }
+  const bytes = new Uint8Array(int16.buffer)//整数の並びを「バイトの並び」として見る
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])//1バイトずつ文字にする
+  return btoa(binary)//バイト列を base64 文字に変換（btoa=binary to ascii）
+}
+
+// OpenAIの音声(base64文字) → 16bit → Float32 に変換（再生できる形）
+function base64ToFloat32(b64: string) {
+  const binary = atob(b64)//base64 を元のバイト列(文字)に戻す（atob=ascii to binary）
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)//1文字ずつ数値(バイト)に
+  const int16 = new Int16Array(bytes.buffer)//バイトの並びを16bit整数として見る
+  const float32 = new Float32Array(int16.length)
+  for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000//整数を-1〜1の小数に戻す
+  return float32
+}
+
+
+function App() {//画面一個分の部品
   const [started, setStarted] = useState(false)//startedが今の状態（false)であり、setStartedが状態を変化させるボタンとなる
   const [health, setHealth] = useState('まだ確認していません')
   const [wsReply, setWsReply] = useState('まだ送ってません')
@@ -8,6 +36,13 @@ function App() {//画面一個分の部品であり、この関数が返した�
   const [volume, setVolume] = useState(0)
   const [question, setQuestion] = useState('')//入力欄に打った質問の文字を覚えておく箱
   const [aiAnswer, setAiAnswer] = useState('')//AIの返答を覚えておく箱
+  const [talking, setTalking] = useState(false)//会話中かどうか
+  const [aiText, setAiText] = useState('')//AIが今しゃべっている内容(文字)
+
+  const wsRef = useRef<WebSocket | null>(null)//OpenAIへの中継回線（裏方）
+  const audioCtxRef = useRef<AudioContext | null>(null)//音の工場（裏方）
+  const playTimeRef = useRef(0)//次に音を再生する時刻（裏方）
+  const sourcesRef = useRef<AudioBufferSourceNode[]>([])//再生中の音の一覧（割り込みで止める用）
 
   async function checkHealth() {
     try {//通信をまずやってみる
@@ -73,6 +108,90 @@ function App() {//画面一個分の部品であり、この関数が返した�
     }
   }
 
+  // ===== ここからリアルタイム音声会話　=====
+
+  //受け取った音声のかけらを、途切れないように順番に再生する
+  function playChunk(float32: Float32Array) {
+    const ctx = audioCtxRef.current
+    if (!ctx) return//工場が無ければ何もしない
+    const buffer = ctx.createBuffer(1, float32.length, 24000)//1ch・24kHzの「音の器」を作る
+    buffer.getChannelData(0).set(float32)//器に音の中身を流し込む
+    const src = ctx.createBufferSource()//音を鳴らす再生機
+    src.buffer = buffer
+    src.connect(ctx.destination)//スピーカーへつなぐ
+    const startAt = Math.max(ctx.currentTime, playTimeRef.current)//前のかけらの続きの時刻から鳴らす
+    src.start(startAt)
+    playTimeRef.current = startAt + buffer.duration//次のかけらの開始時刻を更新（=途切れない）
+    sourcesRef.current.push(src)//割り込みで止められるよう記録
+    src.onended = () => {//鳴り終わったら一覧から外す
+      sourcesRef.current = sourcesRef.current.filter((s) => s !== src)
+    }
+  }
+
+  //割り込み：再生中の音を全部止める
+  function stopPlayback() {
+    for (const s of sourcesRef.current) {
+      try {
+        s.stop()
+      } catch (e) {
+        //もう止まっている場合は無視
+      }
+    }
+    sourcesRef.current = []//一覧を空に
+    if (audioCtxRef.current) playTimeRef.current = audioCtxRef.current.currentTime//再生時刻をリセット
+  }
+
+  //会話スタート：中継につなぐ→マイク送信→受信した音を再生
+  async function startConversation() {
+    setTalking(true)
+    setAiText('')
+
+    //1) バックエンドの中継(/realtime)につなぐ
+    const ws = new WebSocket('ws://127.0.0.1:8000/realtime')
+    wsRef.current = ws
+
+    //2) 音の工場を24kHzで作る（送受信ともこのレートで統一）
+    const ctx = new AudioContext({ sampleRate: 24000 })
+    audioCtxRef.current = ctx
+    playTimeRef.current = 0
+
+    //3) OpenAIから来たメッセージを処理
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data)//届いたJSON文字を中身に戻す
+      if (data.type === 'response.output_audio.delta') {
+        playChunk(base64ToFloat32(data.delta))//音声のかけら→再生
+      } else if (data.type === 'response.output_audio_transcript.delta') {
+        setAiText((prev) => prev + data.delta)//AIの発話テキストをどんどん追記
+      } else if (data.type === 'input_audio_buffer.speech_started') {
+        stopPlayback()//自分が話し始めたらAIの音を止める(割り込み)
+        setAiText('')
+      }
+    }
+
+    //4) マイクを取得して、音を送り続ける
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const source = ctx.createMediaStreamSource(stream)//マイクを工場入口へ
+    const processor = ctx.createScriptProcessor(4096, 1, 1)//音を小分けで受け取る部品
+    source.connect(processor)
+    processor.connect(ctx.destination)//これが無いと processor が動かない（出力は無音）
+    processor.onaudioprocess = (e) => {//音が一定量たまるたびに呼ばれる
+      if (ws.readyState !== WebSocket.OPEN) return//まだ繋がってなければ送らない
+      const input = e.inputBuffer.getChannelData(0)//マイクのFloat32(24kHz)
+      const b64 = floatToBase64(input)//送れる形に変換
+      ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: b64 }))//OpenAIへ音を送る
+    }
+  }
+
+  //会話ストップ：全部止めて片付ける
+  function stopConversation() {
+    setTalking(false)
+    stopPlayback()
+    if (wsRef.current) wsRef.current.close()//中継を切る
+    if (audioCtxRef.current) audioCtxRef.current.close()//工場を閉じる（マイクも止まる）
+    wsRef.current = null
+    audioCtxRef.current = null
+  }
+
   return (
     <div style={{ textAlign: 'center', marginTop: '4rem', fontFamily: 'sans-serif' }}>{/*中央寄せ・上に余白・フォント指定*/}
       <h1>Mingo</h1>{/*見出し */}
@@ -106,6 +225,12 @@ function App() {//画面一個分の部品であり、この関数が返した�
       />
       <button onClick={askAI}>AIに質問</button>
       <p>AIの答え: {aiAnswer}</p>
+
+      <hr style={{ margin: '2rem 0' }} />
+      <button onClick={talking ? stopConversation : startConversation}>{/*会話中なら止める、そうでなければ始める*/}
+        {talking ? '■ 会話を終わる' : 'AIと声で話す'}
+      </button>
+      <p>AIの発話: {aiText}</p>
     </div>
   )
 }

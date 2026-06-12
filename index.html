@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Mingo</title>
+  </head>
+  <body style="text-align: center; margin-top: 4rem; font-family: sans-serif">
+    <h1>Mingo</h1>
+    <p>AIと会話して言語学習を支援します。</p>
+
+    <button id="checkBtn">サーバーの状態を確認</button>
+    <p id="result">まだ確認していません</p>
+
+    <script>
+      // ボタンを押したら /health に聞いて、結果を画面に出す
+      document.getElementById("checkBtn").onclick = async () => {
+        const res = await fetch("/health"); // 同じサーバーなので住所は "/health" だけでOK
+        const data = await res.json(); // 返事(JSON)を中身に戻す
+        document.getElementById("result").textContent =
+          "バックエンドの返事: " + data.status; // 画面に表示
+      };
+    </script>
+  </body>
+</html>

@@ -13,3 +13,6 @@ backend/cache/
 # ==== OS ====
 .DS_Store
 Thumbs.db
+
+# ==== Office 一時ファイル ====
+~$*

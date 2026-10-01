@@ -6135,6 +6135,9 @@ app.mount("/",StaticFiles(directory=FRONTEND_DIR,html = True),name = "frontend")
 
 > Next, we write tests.
 
+テストはプログラムやアプリを作った時に、「期待通りに正しく動くか」「バグがないか」をあらかじめ確認する作業のこと(Abstract,Upulee Kanewala, James M. Bieman,2018)を言います。
+その中でユニットテストはプログラム全体ではなく、関数やメソッドなどの「一番小さな部品（ユニット）」ごとに分けて行うテストのことです。(3.2. RQ2: Are there special characteristics or faults in scientific software or its development that make testing difficult?,Upulee Kanewala, James M. Bieman,2018)のことです。これによりバグの場所がすぐにわかるだけではなく、細かい部品の段階で計算誤差や間違いを直しておくことで全体を組んだ時に大きなトラブルになるのを防げます。ソフトウェアのテストはまず関数やモジュールなどの「一つの部品」のテストを行い、それら部品同士を「組み合わせたとき」にうなく連動するかを確かめるテストである結合テストを行い、最後に全体テストを行うのが一般的です。
+
 AWSへデプロイします。
 
 > We deploy to AWS.
@@ -6264,3 +6267,5 @@ Jaap-Henk Hoepman,Privacy Design Strategies(2024)
 Shahin, M., Babar, M. A., & Zhu, L. (2017). Continuous Integration, Delivery and Deployment: A Systematic Review on Approaches, Tools, Challenges and Practices. IEEE Access, 5, 3909–3943.
 
 Kinsman, T., Wessel, M., Gerosa, M. A., & Treude, C. (2021). How Do Software Developers Use GitHub Actions to Automate Their Workflows? MSR 2021
+
+Upulee Kanewala, James M. Bieman(2018),Testing Scientific Software: A Systematic Literature Review

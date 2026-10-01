@@ -6216,9 +6216,7 @@ Mingoは フロント（React/TypeScript） と サーバー（FastAPI/Python）
 
 > In CD (deployment), we make Mingo, which runs on our own PC, available to other users. The screen is placed on S3 + CloudFront, and the server on EC2.
 
-監視（コストアラート）
 
-> Monitoring (Cost Alerts)
 
 ## 引用 / References
 

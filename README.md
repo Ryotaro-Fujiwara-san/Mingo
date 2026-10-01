@@ -6227,7 +6227,7 @@ Google,Gemini Developer API,
 
 [Gemini Developer API の料金  \|  Gemini API  \|  Google AI for Developers](https://ai.google.dev/gemini-api/docs/pricing?hl=ja)
 
-> [Gemini Developer API pricing \| Gemini API \| Google AI for Developers](https://ai.google.dev/gemini-api/docs/pricing?hl=ja)
+
 
 Debadatta Patel(2026),Language Learning Apps Market Outlook
 
@@ -6245,9 +6245,7 @@ Conneau, A., et al. (2022). FLEURS: Few-shot Learning Evaluation of Universal Re
 
 Shahul Es, Jithin James, Luis Espinosa-Anke, Steven Schockaert（2023）,RAGAS: Automated Evaluation of Retrieval Augmented Generation
 
-> Shahul Es, Jithin James, Luis Espinosa-Anke, Steven Schockaert (2023), RAGAS: Automated Evaluation of Retrieval Augmented Generation
 
-Patrick Lewis,Ethan Perez(2005),
 
 Retrieval-Augmented Generation for　Knowledge-Intensive NLP Tasks
 
@@ -6262,8 +6260,6 @@ Andreas Nautsch,Preserving privacy in speaker and speech characterisation(2019)
 Jaap-Henk Hoepman,Privacy Design Strategies(2024)
 
 ダイレクト出版株式会社(2024),【OpenAI Embeddings API】文字列をベクトル化して意味の近さを計測してみよう,<https://qiita.com/kana_zzzz/items/aa1a92c9c35d566e4194>
-
-> Direct Publishing Co., Ltd. (2024), [OpenAI Embeddings API] Let's vectorize strings and measure semantic similarity, <https://qiita.com/kana_zzzz/items/aa1a92c9c35d566e4194>
 
 Shahin, M., Babar, M. A., & Zhu, L. (2017). Continuous Integration, Delivery and Deployment: A Systematic Review on Approaches, Tools, Challenges and Practices. IEEE Access, 5, 3909–3943.
 

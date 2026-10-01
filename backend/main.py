@@ -16,24 +16,28 @@ from watchdog.observers import Observer
 from dotenv import load_dotenv
 
 from pydantic import BaseModel #型チェックの土台を取り出す。これがあるおかげで自動でJSONがチェックされる。
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect,Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect,Response,Depends,HTTPException,Request
+from auth import get_current_user, verify_token#作成したauth.pyから検査係を取り出す
 from fastapi.middleware.cors import CORSMiddleware#CORSの許可を取る 
 from google import genai#Geminiと話すSDK
 from openai import OpenAI#OpenAIと話すSDK
 from google.genai import types #Blobなどの型
 from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage#Claudeに対する操作
+from fastapi.staticfiles import StaticFiles
 
 
-
-
+##== DBへの接続を開く関数==##
+def get_conn():
+    return sqlite3.connect("memo.db")
 
 
 ##== メモ・ヒント機能用のテーブルを作る関数を定義 ==##
 def init_memo_db():
-    conn = sqlite3.connect("memo.db")
+    conn = get_conn()
     ##== メモ・ヒント機能用のDBを定義 ==##
     conn.execute("""CREATE TABLE IF NOT EXISTS memo_item(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
         type TEXT NOT NULL,
         text TEXT NOT NULL,
         vector TEXT,
@@ -47,14 +51,53 @@ def init_memo_db():
     ##== ダッシュボード用のDBを定義 ==##
     conn.execute("""CREATE TABLE IF NOT EXISTS mastered(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
         text TEXT NOT NULL,
         mastered_at TEXT DEFAULT (datetime('now'))
+    )""")
+
+    ##== ユーザーごとのAPI呼び出し回数を記録するDBを定義 ==##
+    conn.execute("""CREATE TABLE IF NOT EXISTS usage(
+        user_id TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        day TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(user_id,endpoint,day)
     )""")
 
     conn.commit()#変更を確定し、テーブルを作成
     conn.close()#DBへの接続を閉じる
 init_memo_db()#起動時にメモ・ヒント用のDBを起動（memo_itemとmasteredの両方を作る）
 
+##== １ユーザーの１日あたりの関数呼び出し上限 ==##
+LIMITS = {
+    "/memo":30,
+    "/hint":30,
+    "/interaction":1000,
+    "/grammar_search":50,
+    "/pronounce":50,
+    "/realtime":20,
+}
+
+##== 今日の呼び出し回数を+1して、+1した後の回数を返す関数 ==##
+def count_usage(user_id,endpoint):
+    conn = get_conn()
+    count = conn.execute(
+        "INSERT INTO usage(user_id,endpoint,day,count)VALUES(?,?,date('now'),1)"
+        "ON CONFLICT(user_id,endpoint,day) DO UPDATE SET count = count + 1 "
+        "RETURNING count",
+        (user_id,endpoint),
+    ).fetchone()[0]
+    conn.commit()#変更を確定し、テーブルを作成
+    conn.close()#DBへの接続を閉じる
+    return count
+
+##== JWTの検査とこの今日の呼び出し回数を+1して、その後の回数を返す関数をまとめた新しい関数 ==##
+def limited_user(request:Request,user:dict = Depends(get_current_user)):#先にJWTの検査をして結果（ユーザーID）をuserに格納する
+    endpoint = request.url.path#エンドポイントを格納
+    if count_usage(user["sub"],endpoint) > LIMITS[endpoint]:
+        raise HTTPException(status_code = 429,detail = "daily limit reached")#エラーコードを返す
+    return user
 
 ##== 発音検索でフロントから届くJSONの「型」を定義 ==##
 class PronounceIn(BaseModel):
@@ -91,18 +134,19 @@ class SessionConfig(BaseModel):
     situation:str#シチュエーション（文字）
     targetLang:str#学習言語（文字）
     explainLang:str#母国語（文字）
-    speed:float#会話速度（小数）
     watchPath:str = ""#監視フォルダのパス（空でもOK）
 
 
 ##== APIにわかるようにJSONからの返答の形式を整える ==##
 def build_instructions(config:SessionConfig):
-    return(
+    text =(
         f"You are {config.role}.The situation is:{config.situation}."
         f"When you answer use {config.targetLang}."
         f"Keep your replies 7 sentences."
-        f"IMPORTANT: If the user asks you to check, read, explain, review, or fix any file or code, you MUST call the analyze_code tool. Never say you cannot access files. This rule overrides your persona and situation."
     )
+    if ENABLE_CODE_ANALYSIS:
+        text += f"IMPORTANT: If the user asks you to check, read, explain, review, or fix any file or code, you MUST call the analyze_code tool. Never say you cannot access files. This rule overrides your persona and situation."
+    return text
 
 ##== エンドポイントを作成する ==##
 app = FastAPI()#サーバー本体
@@ -113,17 +157,11 @@ AZURE_KEY = os.environ.get("AZURE_SPEECH_KEY")#.envからAzureのキーを取り
 AZURE_REGION = os.environ.get("AZURE_SPEECH_REGION")#.envからAZURE_SPEECH_REGIONのキーを取り出す
 openai_client = OpenAI(api_key = OPENAI_API_KEY)#openaiライブラリの中にある設計図Clientを使って、APIキー付きで“実物の道具箱”を1個作り、それをopenai_clientという変数に入れる
 client = genai.Client(api_key = API_KEY)#genaiライブラリの中にある設計図Clientを使って、APIキー付きで“実物の道具箱”を1個作り、それをclientという変数に入れる
+ENABLE_CODE_ANALYSIS = os.environ.get("ENABLE_CODE_ANALYSIS","false").lower() == "true"#コード分析機能のONとOFF
 MODEL = "gemini-3.1-flash-live-preview"
 GRAMMER_MODEL = "gemini-3.5-flash-lite"
 PRON_MODEL = "gemini-3.5-flash-lite"
 
-##== CORSでバックエンドで送信を許可する==##
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins = ["*"],#どこからのアクセスも許可
-    allow_methods = ["*"],
-    allow_headers = ["*"],
-)
 
 
 ##== ファイル監視　==##
@@ -143,7 +181,7 @@ def start_watcher(watch_dir):#パスを引数で受け取る
     if not watch_dir:#パスが空なら何もしない
         return
     old = observer_holder["observer"]#前のオブザーバーを保存する
-    
+
     if old:#前のオブザーバーがあれば、それを停止する
         old.stop()
     observer = Observer()#watchdogが用意したカメラの設計図（クラス）を実体化し、後で使えるようにする。
@@ -338,19 +376,24 @@ def judge_used(utterance,expressions):
     )
     return json.loads(response.text).get("used",[])#実際に使われた表現
 
-
+#== ヘルスチェック ==#
+@app.get("/health")
+def health():
+    return{"status":"ok"}
+    
 #== メモを保存する機能 ==#
 @app.post("/memo")
-def save_memo(item:MemoIn):
+def save_memo(item:MemoIn,user:dict = Depends(limited_user)):
+    user_id = user["sub"]#ログイン中のユーザーID
     result = split_memo(item.text)
-    conn = sqlite3.connect("memo.db")
+    conn = get_conn()
 
     #重複を除いた新しい要素だけを集める
     new_items = []#新しい要素を格納する変数
     seen_texts = set()#同じ値が重複しない集合を作成
     for el in result["items"]:
         text = el["text"]#表現のみ格納
-        exists = conn.execute("SELECT 1 FROM memo_item WHERE text = ?",(el["text"],)).fetchone()
+        exists = conn.execute("SELECT 1 FROM memo_item WHERE user_id = ? AND text = ?",(user_id,el["text"],)).fetchone()
         if not exists and text not in seen_texts:#DBにも無く、今回の処理中にも重複して無ければ
             new_items.append(el)#表現が重複していなければ、その値を新しい要素を格納する変数に格納する
             seen_texts.add(text)#一時的に今回の処理の間だけ表現を保存
@@ -358,17 +401,17 @@ def save_memo(item:MemoIn):
     if new_items:
         vectors = embed_texts([el["text"] for el in new_items])
         for el,vector in zip(new_items,vectors):
-            conn.execute("INSERT INTO memo_item(type,text,vector) VALUES(?,?,?)",(el["type"],el["text"],vector,))
+            conn.execute("INSERT INTO memo_item(user_id,type,text,vector) VALUES(?,?,?,?)",(user_id,el["type"],el["text"],vector,))
     conn.commit()
     conn.close()
     return{"status":"SAVED"}#フロントにJSONで返答する
 
 #== ヒントを提示する機能 ==#
 @app.post("/hint")
-def get_hint(item:HintIn):
+def get_hint(item:HintIn,user:dict = Depends(limited_user)):
     q_vec = json.loads(embed_texts([item.query])[0])#queryの一件目[0]をベクトル化し、それをPytonのリストに戻す
-    conn = sqlite3.connect("memo.db")
-    rows = conn.execute("SELECT type,text,vector,good,bad,julianday('now')-julianday(last_seen_at) AS delta_days FROM memo_item").fetchall()#全メモから拾い
+    conn = get_conn()
+    rows = conn.execute("SELECT type,text,vector,good,bad,julianday('now')-julianday(last_seen_at) AS delta_days FROM memo_item WHERE user_id = ?",(user["sub"],)).fetchall()#全メモから拾い
     conn.close()
     scored=[]
     for type_,text_,vector_,good_,bad_,delta_days_ in rows:#書くメモと類似度を計算
@@ -388,41 +431,44 @@ def get_hint(item:HintIn):
 
 #== ヒントの使用状況を判定して習得度を更新する機能 ==#
 @app.post("/interaction")
-def record_interaction(item:Interaction):
-    conn = sqlite3.connect("memo.db")
-    rows = conn.execute("SELECT id,text,good,bad,hint_free_success FROM memo_item").fetchall()#全メモを取り出す
+def record_interaction(item:Interaction,user:dict = Depends(limited_user)):
+    user_id = user["sub"]
+    conn = get_conn()
+    rows = conn.execute("SELECT id,text,good,bad,hint_free_success FROM memo_item WHERE user_id = ?",(user_id,)).fetchall()#全メモを取り出す
     all_texts = [r[1] for r in rows]#textのみ取り出す
     used = judge_used(item.utterance,all_texts)#実際に使われた表現
     for id_,text_,good_,bad_,hint_free_success_ in rows:
         is_used = text_ in used#実際に使われたか
         is_shown = text_ in item.shown#ヒントで見せたか
         if is_used and is_shown:#①ヒントを使った成功
-            conn.execute("UPDATE memo_item SET good=good+1, last_seen_at=datetime('now') WHERE id=?",(id_,))
+            conn.execute("UPDATE memo_item SET good=good+1, last_seen_at=datetime('now') WHERE id=? AND user_id=?",(id_,user_id))
         elif is_used and not is_shown:#③ヒント無しで成功
-            conn.execute("UPDATE memo_item SET good=good+2, hint_free_success=hint_free_success+1, last_seen_at=datetime('now') WHERE id=?",(id_,))
+            conn.execute("UPDATE memo_item SET good=good+2, hint_free_success=hint_free_success+1, last_seen_at=datetime('now') WHERE id=? AND user_id=?",(id_,user_id))
             if hint_free_success_ + 1 >= DELETE_MAX and recall_probability(good_+2, bad_, HALF_LIFE_MAX) >= 0.5:#習得済み
-                conn.execute("DELETE FROM memo_item WHERE id=?",(id_,))
+                conn.execute("DELETE FROM memo_item WHERE id=? AND user_id=?",(id_,user_id))
+                conn.execute("INSERT INTO mastered(user_id,text) VALUES(?,?)",(user_id,text_))
         elif is_shown and not is_used:#②失敗（見たのに使わなかった）
-            conn.execute("UPDATE memo_item SET bad=bad+1 WHERE id=?",(id_,))
+            conn.execute("UPDATE memo_item SET bad=bad+1 WHERE id=? AND user_id=?",(id_,user_id))
     conn.commit()
     conn.close()
     return {"status":"updated","used":used}
 
 #== 進捗ダッシュボードに必要な情報を取得する機能 ==#
 @app.get("/dashboard")
-def dashboard():
-    conn = sqlite3.connect("memo.db")
-    rows = conn.execute("SELECT id,type,text,hint_free_success FROM memo_item").fetchall()
-    mastered_count = conn.execute("SELECT COUNT(*) FROM mastered").fetchone()[0]#masterdから習得した表現（行）の数を習得し、(?.)タプルから[0]で?のみ取得する
+def dashboard(user:dict = Depends(get_current_user)):
+    user_id = user["sub"]
+    conn = get_conn()
+    rows = conn.execute("SELECT id,type,text,hint_free_success FROM memo_item WHERE user_id = ?",(user_id,)).fetchall()
+    mastered_count = conn.execute("SELECT COUNT(*) FROM mastered WHERE user_id = ?",(user_id,)).fetchone()[0]#masterdから習得した表現（行）の数を習得し、(?.)タプルから[0]で?のみ取得する
     conn.close()
     learning = [{"id":id_,"type":type_,"text":text_,"hint_free_success":hfs_} for id_,type_,text_,hfs_ in rows]#rows = [(1,"word","juicy",2), (2,"idiom","get rid of",0)]から{"id":1,"type":"word","text":"juicy","hint_free_success":2},{"id":2,"type":"idiom","text":"get rid of","hint_free_success":0}のように(id, type, text, hint_free_success)の各行をid_, type_, text_, hfs_の4つの変数に分けて取り出し、{"id":id_, "type":type_, "text":text_, "hint_free_success":hfs_}という辞書を作る
     return{"mastered_count":mastered_count,"learning":learning}
 
 #== メモの表現を削除する機能 ==#
 @app.delete("/delete")
-def delete_memo(item:DeleteIn):
-    conn = sqlite3.connect("memo.db")
-    conn.execute("DELETE FROM memo_item WHERE id=?",(item.id,))
+def delete_memo(item:DeleteIn,user:dict = Depends(get_current_user)):
+    conn = get_conn()
+    conn.execute("DELETE FROM memo_item WHERE id=? AND user_id=?",(item.id,user["sub"]))
     conn.commit()
     conn.close()
     return{"status":"deleted"}
@@ -456,18 +502,20 @@ async def analyze_code(request,lang):
         folder = current.get("folder")#無ければ入力した作業フォルダ
     if not folder:#どちらも無ければ終了
         return{"summary":"作業フォルダがありません。","code":""}
+    if not ENABLE_CODE_ANALYSIS:
+        return{"summary":"あなたにはコード分析は使えません。","code":""}
 
     prompt = (
             f"ファイル{path}について次の依頼に答えて:{request}\n"
             f"コード内のコメントは必ず{lang}で書くこと\n"
             f"必ず次のJSON形式だけで答えること（前後に他の文字を書かない）:\n"
-            f'{{"summary":"音声で話すための短い要約。コードは絶対に入れない","code":"コードや具体的な変更点。無ければ空文字"}}'
+            f'{{"summary":"音声で話すための短い要約。コードは絶対に入れない","code":"コードや具体的な変更点。特に該当ファイルの何行を変更すべきか具体的に無ければ空文字"}}'
     )
     options = ClaudeAgentOptions(
             cwd = folder,#Claudeが探索するフォルダ
             allowed_tools = ["Read","Grep","Glob"],#読むことだけ許可する
             permission_mode="bypassPermissions",#毎回確認は出さない
-            max_turns = 10,#思考往復の上限
+            max_turns = 20,#思考往復の上限
     )
 
     try:
@@ -524,12 +572,12 @@ def analyze_grammar(text,target_lang,explain_lang,context=""):
 
 #== 文法検索機能 ==#
 @app.post("/grammar_search")
-def grammar_serch(item:GrammarSearchIn):
+def grammar_serch(item:GrammarSearchIn,user:dict = Depends(limited_user)):
     return analyze_grammar(item.text,item.targetLang,item.explainLang,item.context)
 
 #== 発音検索機能 ==#
 @app.post("/pronounce")
-def pronounce(item:PronounceIn):
+def pronounce(item:PronounceIn,user:dict = Depends(limited_user)):
     result = openai_client.audio.speech.create(
         model = "tts-1",#speed対応のTTSモデル
         voice = "alloy",#声の種類
@@ -540,11 +588,20 @@ def pronounce(item:PronounceIn):
 
 #== リアルタイム会話機能 ==#
 @app.websocket("/realtime")
-async def realtime(websocket:WebSocket): #エンドポイントが起動後にこの関数のみ自動で処理される（ベースシステム）
+async def realtime(websocket:WebSocket,token:str = ""): #エンドポイントが起動後にこの関数のみ自動で処理される（ベースシステム）
+    try:
+        user = verify_token(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    if count_usage(user["sub"],"/realtime") > LIMITS["/realtime"]:
+        await websocket.close(code =1008)
+        return
     await websocket.accept()#接続を受け入れる
     first = await websocket.receive_text()#最初のメッセージを受け取り、first変数に入れる
     config = SessionConfig(**json.loads(first))
-    start_watcher(config.watchPath)#UIで指定した作業フォルダを監視する。
+    if ENABLE_CODE_ANALYSIS:
+       start_watcher(config.watchPath)#UIで指定した作業フォルダを監視する。
     instructions = build_instructions(config)#指示文を作る
 
     gemini_config = {
@@ -552,8 +609,9 @@ async def realtime(websocket:WebSocket): #エンドポイントが起動後に�
         "system_instruction":instructions,#指示文を入れる
         "input_audio_transcription":{"language_codes":[config.targetLang]},#自分の発言を文字起こしする
         "output_audio_transcription":{},#AIの発言を文字起こしする
-        "tools":[CODE_TOOL],#コード分析ツール
     }
+    if ENABLE_CODE_ANALYSIS:
+        gemini_config["tools"] = [CODE_TOOL]
     print("文字起こし言語",gemini_config["input_audio_transcription"])
     async with client.aio.live.connect(model = MODEL,config = gemini_config) as session:
         audio_buffer = bytearray()#音声用のリスト
@@ -653,3 +711,8 @@ async def realtime(websocket:WebSocket): #エンドポイントが起動後に�
         await asyncio.wait({task_a, task_b}, return_when=asyncio.FIRST_COMPLETED)
         task_a.cancel()
         task_b.cancel()
+
+#==ビルドしたReactの画面を配る==#
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__),"..","frontend","dist")
+if os.path.isdir(FRONTEND_DIR):#ビルドした画面があるときだけ配る
+    app.mount("/",StaticFiles(directory=FRONTEND_DIR,html = True),name = "frontend")

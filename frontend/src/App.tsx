@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { WavRecorder,WavStreamPlayer } from "wavtools";
+import{useAuth} from 'react-oidc-context'
 //== 言語選択におけるオブジェクトをリストに並べたもの ==//
 const LANGUAGE =[
   {code:'en',label:'英語'},
@@ -16,13 +17,13 @@ const ROLE_COLOR:Record<string,string> = {//文法検索の際、文字（S,Vな
 }
 
 //==文法検索結果を描く関数==//
-function SentenceBlock({sentence,targetLang,explainLang}:{sentence:any,targetLang:string,explainLang:string}){
+function SentenceBlock({sentence,targetLang,explainLang,token}:{sentence:any,targetLang:string,explainLang:string,token?:string}){
   const[open,setOpen] = useState<Record<number,any>>({})
   useEffect(()=>{setOpen({})},[sentence])//文[sentence]が変わったらetOpen({})でopenをリセットする
   async function tapClause(i:number,clauseText:string) {
-    const res = await fetch("http://localhost:8000/grammar_search",{
+    const res = await fetch("/grammar_search",{
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
       body:JSON.stringify({text:clauseText,targetLang,explainLang,context:sentence.text}),
     })
     const data = await res.json()
@@ -50,7 +51,7 @@ function SentenceBlock({sentence,targetLang,explainLang}:{sentence:any,targetLan
       {sentence.segments.map((seg:any,i:number)=>
         open[i] && <div key={"o"+i} style={{marginLeft:"14px",borderLeft:"2px solid #ccc",paddingLeft:"10px"}}><div>{open[i].all_meaning}</div>
         {open[i].sentences.map((s:any,j:number)=>
-        <SentenceBlock key={j} sentence={s} targetLang={targetLang} explainLang={explainLang}/>//Reactで関数を使う時はタグで書く
+        <SentenceBlock key={j} sentence={s} targetLang={targetLang} explainLang={explainLang} token={token}/>//Reactで関数を使う時はタグで書く
         )}
         </div>
       )}
@@ -60,6 +61,7 @@ function SentenceBlock({sentence,targetLang,explainLang}:{sentence:any,targetLan
 
 //== ボタンの設定を保存する項目 ==//
 function App(){
+  const auth = useAuth();//今のログイン状態をauth変数に格納する
   const[role,setRole] = useState('')//AIの属性を決定する。ここではテキスト入力を想定し初期状態は0にする
   const[situation,setSituation] =  useState('')//AIのシチュエーションを決定する。ここではテキスト入力を想定し初期状態は0にする
   const[targetLang,setTargetLang] = useState('en')//学習言語を設定する。初期状態は英語
@@ -86,8 +88,12 @@ function App(){
  
 //== 確定ボタンを押したら初期設定が送信される関数 ==//
   function startConversation(){
-    const config = {role,situation,targetLang,explainLang,speed,watchPath};
-    const ws = new WebSocket("ws://localhost:8000/realtime");
+    const config = {role,situation,targetLang,explainLang,watchPath};
+    //①今のページがhttps（PC）ならwss、それ以外（AWS）ならwsにします
+    const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+
+    //②接続先を確定
+    const ws = new WebSocket(`${wsProtocol}://${location.host}/realtime?token=${token}`);
     wsRef.current = ws;                                 // 確定したらwsを保存
     ws.onopen = () =>{
       ws.send(JSON.stringify(config));
@@ -143,10 +149,21 @@ function App(){
     }
   }
 
+//==全てのfetchにJWTを付ける関数==//
+async function api(path:string,init:RequestInit={}) {
+  const res = await fetch(path,{
+    ...init,
+    headers:{...init.headers,Authorization:`Bearer ${token}`},
+  });
+  if(res.status === 429){
+    alert("利用制限に達しました。明日再利用できます")
+  }
+  return res;
+}
 
 //==発音検索で入力文をTTSで音声で再生する関数 ==//
 async function playPronunciation() {
-  const res = await fetch("http://localhost:8000/pronounce",{
+  const res = await api("/pronounce",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({text:pronInput,targetLang,speed:pronSpeed}),
@@ -158,7 +175,7 @@ async function playPronunciation() {
 
 //==文法検索で入力文を解析する関数 ==//
 async function searchGrammar() {
-  const res = await fetch("http://localhost:8000/grammar_search",{
+  const res = await api("/grammar_search",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({text:grammarInput,targetLang,explainLang}),
@@ -169,7 +186,7 @@ async function searchGrammar() {
 //==メモを送信する関数 ==//
 async function saveMemo() {
   if(!memoText)return;//メモが空なら実行しない
-  await fetch("http://localhost:8000/memo",{
+  await api("/memo",{
     method:"POST",//どの操作か
     headers:{"Content-Type": "application/json"},//JSONで送ると指定
     body:JSON.stringify({text:memoText}),//送るデータ本体
@@ -182,7 +199,7 @@ async function getHint() {
   const aiMessages = messages.filter(m => m.who ==="AI");
   const lastAI = aiMessages[aiMessages.length-1];//最新のAIの発言
   if(!lastAI) return;//もしまだAIの発言が無ければ返信しない
-  const res = await fetch("http://localhost:8000/hint",{
+  const res = await api("/hint",{
     method:"POST",//どの操作か
     headers:{"Content-Type": "application/json"},//JSONで送ると指定
     body:JSON.stringify({query:lastAI.text}),//送るデータ本体
@@ -194,7 +211,7 @@ async function getHint() {
 
 //==ヒント表現を更新する関数 ==//
 async function recordInteraction(utterance:string){
-  await fetch("http://localhost:8000/interaction",{
+  await api("/interaction",{
     method:"POST",//どの操作か
     headers:{"Content-Type": "application/json"},//JSONで送ると指定
     body:JSON.stringify({utterance,shown:shownHintsRef.current}),//送るデータ本体
@@ -205,14 +222,14 @@ async function recordInteraction(utterance:string){
 
 //==ダッシュボードのデータを取得する関数 ==//
 async function getDashboard() {
-  const res = await fetch("http://localhost:8000/dashboard");
+  const res = await api("/dashboard");
   const data = await res.json();
   setDash(data);//ダッシュボードのデータを随時更新し変数を表示する
 }
 
 //==ダッシュボードのデータを削除する関数 ==//
 async function deleteMemo(id:number) {
-  await fetch("http://localhost:8000/delete",{
+  await api("/delete",{
     method:"DELETE",//どの操作か
     headers:{"Content-Type": "application/json"},//JSONで送ると指定
     body:JSON.stringify({id}),//送るid
@@ -305,6 +322,15 @@ useEffect(() => {
   else stopRecording();
 },[micOn]);//micOn（マイクがON）なら動く
 
+
+//== ログインしていなければ本来の画面の代わりにこちらの画面を見せる ==//
+if (auth.isLoading) return <p>読み込み中…</p>;
+if (!auth.isAuthenticated) {
+  return <button onClick={() => auth.signinRedirect()}>ログイン</button>;
+}
+
+const token = auth.user ?. access_token;//
+
 //== UI ==//
 return(
 <div>
@@ -313,8 +339,9 @@ return(
 
 <input value={role} onChange = {(e) => setRole(e.target.value)} placeholder = "AIの属性"/>
 <input value={situation} onChange = {(e) => setSituation(e.target.value)} placeholder = "シチュエーション"/>
+{import.meta.env.VITE_ENABLE_CODE_ANALYSIS === "true" &&(
 <input value={watchPath} onChange = {(e) => setWatchPath(e.target.value)} placeholder = "作業・監視したいパス"/>
-
+)}
 
 
 <label>
@@ -436,7 +463,7 @@ return(
       <input value={grammarInput} onChange = {(e) => setGrammarInput(e.target.value)} placeholder = "検索したい文章を入力"/>
       <button onClick = {searchGrammar}>検索</button>
       {grammarResult && grammarResult.sentences.map((s:any,i:number)=>(
-        <SentenceBlock key={i} sentence={s} targetLang={targetLang} explainLang={explainLang}/>
+        <SentenceBlock key={i} sentence={s} targetLang={targetLang} explainLang={explainLang} token ={token}/>
       ))}
   </div>
   )}

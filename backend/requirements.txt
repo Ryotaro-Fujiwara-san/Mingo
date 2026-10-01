@@ -5,3 +5,8 @@ python-dotenv
 truststore
 google-genai
 azure-cognitiveservices-speech
+pyjwt[crypto]
+openai
+watchdog
+claude-agent-sdk
+psycopg[binary]

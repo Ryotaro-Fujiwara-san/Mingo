@@ -2,25 +2,41 @@
 
 ## 序論 / Introduction
 
-近年では、世界の言語学習アプリ市場は2034年までに438億ドルに達すると予測され、この期間の年間平均成長率は17.1％という高い水準にあります。(Debadatta Patel,2026)
+言語学習において、最も危惧される問題は調べた言語を使わずに放置してしまうと、すぐに忘れてしまいます。これを「massed practice」と呼びます。そしてそれらの表現を使ったり復習したりしないと、「忘却曲線」に従って記憶は時間と共に指数関数敵に減衰し、最終的には思い出せなくなります。(Settles & Meeder ,2016)
 
-> In recent years, the global language-learning app market has been projected to reach USD 43.8 billion by 2034, with a high compound annual growth rate of 17.1% over this period. (Debadatta Patel, 2026)
+> In language learning, the biggest concern is that if you leave the language you looked up unused, you quickly forget it. This is called "massed practice." If those expressions are not used or reviewed, memory decays exponentially over time following the "forgetting curve," and eventually you can no longer recall them. (Settles & Meeder, 2016)
 
-特にこの言語学習アプリにおいて、AIチャットボットとの会話、特にリアルタイム会話機能では流暢さ、発音、語彙想起力を大幅に改善させることが分かっています。
+例えば記憶の理論であるエビングハウスのモデルによれば、最後に練習してからの経過時間が、その単語が記憶に留まる期間である「半減期」にたいして長くなると、その単語を正しく思い出す確率はほぼゼロになります。
 
-> In language-learning apps in particular, conversation with AI chatbots—especially real-time conversation features—has been shown to significantly improve fluency, pronunciation, and vocabulary recall.
+> For example, according to Ebbinghaus's model of memory, when the time since the last practice becomes long relative to the "half-life"—how long the word stays in memory—the probability of correctly recalling the word drops to almost zero.
 
-しかしこれには、文法・発音・語彙の使用においてリアルタイムで修正案が提示されたり、音声認識技術と音声合成技術を組み合わせることで多様なアクセントや速度でのリスニング練習が可能になり、さらにAIは正しい発音や文構造のモデルを提示するため、学習者はそれを繰り返し聞くことで単語の音を識別する「ボトムアップ処理」能力を高めることができます。これらの要因によりユーザーの第二言語学習における言語スキルの向上に飛躍的な影響を与えることができます。(Watcharapol Wiboolyasarin,2025)
+これに対し、間隔を空けて繰り返し使う間隔反復をすることで、長期記憶における半減期を伸ばすことができ、記憶を定着させることが可能になります。
 
-> This is because corrections for grammar, pronunciation, and vocabulary use can be presented in real time; combining speech recognition with speech synthesis enables listening practice with a variety of accents and speeds; and because the AI presents models of correct pronunciation and sentence structure, learners can listen to them repeatedly and strengthen their "bottom-up processing" ability to distinguish the sounds of words. Together, these factors can dramatically improve users' language skills in second-language learning. (Watcharapol Wiboolyasarin, 2025)
+> In contrast, spaced repetition—using the word repeatedly at intervals—can extend the half-life in long-term memory and make the memory stick.
 
-しかし一般的な個人向け有料プランでは月額9.99ドルから最大19.9ドルへと個人で気軽に言語学習を行いたいユーザーへの負担はいまだに高いままです。
+しかしながら、現在の言語学習アプリ（Duolingoのようなアプリ）ではその単語や表現を翻訳問題のような形式的なレッスンで振り返ることはできても、自由な会話を通じて単語の使用を追跡し、それを間隔反復のアルゴリズムにフィードバックしているものは少ないです。
 
-> However, typical individual paid plans cost from USD 9.99 up to USD 19.9 per month, which remains a heavy burden for users who simply want to study a language casually on their own.
+> However, while current language-learning apps (such as Duolingo) let you review words and expressions in formal lessons like translation exercises, few track word use in free conversation and feed it back into a spaced-repetition algorithm.
 
-ここで今回は、リアルタイム会話機能（発音訂正、文法訂正機能を含む）を作成し、有料会員に転換したユーザー１人あたりの平均月間収益である約8.34ドルを、最大月額の19.9ドル以下で提供しても上回る収益を出せるまでの低価格の原価を実現し、尚且つそれに対する聞き取り・文字起こしの精度を比較することで使用するAPI候補のトレードオフを探ります。
+また記憶の定着において、自由な会話や対話型AIとのやり取りは、文脈の中で特定の単語や表現を自力で思い出す必要があるため、強力な想起練習として機能します。(Dongliang Ding1,2　& Ahmad Muhyiddin B Yusof,2025)
 
-> In this project, we build a real-time conversation feature (including pronunciation correction and grammar correction) and aim to achieve a cost low enough that, even when offered at no more than the maximum monthly price of USD 19.9, it still exceeds the average monthly revenue per paying user of about USD 8.34. We also compare the listening and transcription accuracy of the candidate APIs to explore their trade-offs.
+> Moreover, for memory retention, free conversation and interaction with conversational AI act as powerful retrieval practice, because learners must recall specific words and expressions on their own in context. (Dongliang Ding1,2 & Ahmad Muhyiddin B Yusof, 2025)
+
+他にも研究では単なる再学習を行ったグループに比べ、想起練習と間隔を開けた学習を組み合わせたグループの方が、語彙の習得と保持において約２倍の改善を示しました。(Nur Basak Karatas,2025)
+
+> Other research has also shown that, compared with a group that simply relearned, a group that combined retrieval practice with spaced learning showed about twice the improvement in vocabulary acquisition and retention. (Nur Basak Karatas, 2025)
+
+以上より、AIによる自由会話で知らなかった語彙や表現を自ら使用することがスピーキングの向上に不可欠でありますが、既存の多くのAI会話ボットはあらかじめ用意された設定に基づいたロールプレイや、一般的なトピックでの質問応答に留まりがちです。しかし、学習者が過去に自分で調べ、一度はインプットしたものの、まだ話す時に引き出せない独自の語彙を会話の文脈の中で動的に再活性化させ、自発的な言語使用を促すレベルには達していません。(Theme 4,Dongliang Ding1,2　& Ahmad Muhyiddin B Yusof,2025)
+
+> From the above, actively using unfamiliar vocabulary and expressions in free conversation with AI is essential for improving speaking. However, many existing AI conversation bots tend to stop at role-play based on preset scenarios or question-and-answer on general topics. They have not reached the level of dynamically reactivating, within the context of conversation, the learner's own vocabulary—words the learner looked up and took in once but still cannot retrieve when speaking—to encourage spontaneous language use. (Theme 4, Dongliang Ding1,2 & Ahmad Muhyiddin B Yusof, 2025)
+
+またこれまでの間隔反復モデルや単語定着予測アルゴリズムは、主にドリル演習やフラッシュカード、穴埋め問題といった個別的な「静的学習」を対象に適用されてきました。(2.2 Spaced Repetition and Practice,Settles & Meeder ,2016)
+
+> In addition, existing spaced-repetition models and word-retention prediction algorithms have mainly been applied to isolated "static learning" such as drills, flashcards, and fill-in-the-blank exercises. (2.2 Spaced Repetition and Practice, Settles & Meeder, 2016)
+
+これらの語彙保持のためのシステムを、実際のリアルタイム会話のコンテキストとシームレスに結合させ、AIからの動的な会話に対して最も適合するメモした表現をRAGによってマッチングして、「回答のヒント」としてリアルタイムに差し出す技術的アプローチはまだ十分に開拓されていません。つまり従来のアプリではこれらの語彙をその場面で咄嗟に調べたりすることは困難です。ここで本研究では、学習者個人のメモを意味検索(embedding)で取り出し、習得度・間隔反復で並べ替えて会話のその場で提示するシステム Mingo を設計・実装し、その有効性を検証します。
+
+> A technical approach that seamlessly combines these vocabulary-retention systems with the context of actual real-time conversation—matching, via RAG, the memorized expressions that best fit the AI's dynamic conversation and offering them as "answer hints" in real time—has not yet been sufficiently explored. In other words, with conventional apps it is difficult to look up such vocabulary on the spot. In this study, we design and implement Mingo, a system that retrieves the learner's own memos by semantic search (embedding), ranks them by mastery and spaced repetition, and presents them on the spot during conversation, and we evaluate its effectiveness.
 
 今回実装する大まかなシステムの流れは以下の通りです。まずユーザーは画面からAIの属性、どのようなシチュエーションかをテキスト入力で決定し、学習言語、解説言語、そしてどの会話速度を想定するかをボタンで決定します。入力が確定されたら、ユーザーはマイク機能をONにします。これでユーザーはいつでもAIに対して会話を行うことができ、途中で割り込みが起きても自動で検出・対応ができます。まずユーザーの発言は画面上で文字起こしされ、この時の発言内容が文法的に正しいかどうかをLLMが判定し、正しくなければ訂正された文章と、なぜその文章が適切なのかを自然言語で返答します。
 
@@ -2041,41 +2057,7 @@ audio_buffer.clear()#AIの返事ぶんの音声を捨てる（次の発話をき
 
 ### メモ・ヒント機能 / Memo and Hint Feature
 
-言語学習において、最も危惧される問題は調べた言語を使わずに放置してしまうと、すぐに忘れてしまいます。これを「massed practice」と呼びます。そしてそれらの表現を使ったり復習したりしないと、「忘却曲線」に従って記憶は時間と共に指数関数敵に減衰し、最終的には思い出せなくなります。(Settles & Meeder ,2016)
 
-> In language learning, the biggest concern is that if you leave the language you looked up unused, you quickly forget it. This is called "massed practice." If those expressions are not used or reviewed, memory decays exponentially over time following the "forgetting curve," and eventually you can no longer recall them. (Settles & Meeder, 2016)
-
-例えば記憶の理論であるエビングハウスのモデルによれば、最後に練習してからの経過時間が、その単語が記憶に留まる期間である「半減期」にたいして長くなると、その単語を正しく思い出す確率はほぼゼロになります。
-
-> For example, according to Ebbinghaus's model of memory, when the time since the last practice becomes long relative to the "half-life"—how long the word stays in memory—the probability of correctly recalling the word drops to almost zero.
-
-これに対し、間隔を空けて繰り返し使う間隔反復をすることで、長期記憶における半減期を伸ばすことができ、記憶を定着させることが可能になります。
-
-> In contrast, spaced repetition—using the word repeatedly at intervals—can extend the half-life in long-term memory and make the memory stick.
-
-しかしながら、現在の言語学習アプリ（Duolingoのようなアプリ）ではその単語や表現を翻訳問題のような形式的なレッスンで振り返ることはできても、自由な会話を通じて単語の使用を追跡し、それを間隔反復のアルゴリズムにフィードバックしているものは少ないです。
-
-> However, while current language-learning apps (such as Duolingo) let you review words and expressions in formal lessons like translation exercises, few track word use in free conversation and feed it back into a spaced-repetition algorithm.
-
-また記憶の定着において、自由な会話や対話型AIとのやり取りは、文脈の中で特定の単語や表現を自力で思い出す必要があるため、強力な想起練習として機能します。(Dongliang Ding1,2　& Ahmad Muhyiddin B Yusof,2025)
-
-> Moreover, for memory retention, free conversation and interaction with conversational AI act as powerful retrieval practice, because learners must recall specific words and expressions on their own in context. (Dongliang Ding1,2 & Ahmad Muhyiddin B Yusof, 2025)
-
-他にも研究では単なる再学習を行ったグループに比べ、想起練習と間隔を開けた学習を組み合わせたグループの方が、語彙の習得と保持において約２倍の改善を示しました。(Nur Basak Karatas,2025)
-
-> Other research has also shown that, compared with a group that simply relearned, a group that combined retrieval practice with spaced learning showed about twice the improvement in vocabulary acquisition and retention. (Nur Basak Karatas, 2025)
-
-以上より、AIによる自由会話で知らなかった語彙や表現を自ら使用することがスピーキングの向上に不可欠でありますが、既存の多くのAI会話ボットはあらかじめ用意された設定に基づいたロールプレイや、一般的なトピックでの質問応答に留まりがちです。しかし、学習者が過去に自分で調べ、一度はインプットしたものの、まだ話す時に引き出せない独自の語彙を会話の文脈の中で動的に再活性化させ、自発的な言語使用を促すレベルには達していません。(Theme 4,Dongliang Ding1,2　& Ahmad Muhyiddin B Yusof,2025)
-
-> From the above, actively using unfamiliar vocabulary and expressions in free conversation with AI is essential for improving speaking. However, many existing AI conversation bots tend to stop at role-play based on preset scenarios or question-and-answer on general topics. They have not reached the level of dynamically reactivating, within the context of conversation, the learner's own vocabulary—words the learner looked up and took in once but still cannot retrieve when speaking—to encourage spontaneous language use. (Theme 4, Dongliang Ding1,2 & Ahmad Muhyiddin B Yusof, 2025)
-
-またこれまでの間隔反復モデルや単語定着予測アルゴリズムは、主にドリル演習やフラッシュカード、穴埋め問題といった個別的な「静的学習」を対象に適用されてきました。(2.2 Spaced Repetition and Practice,Settles & Meeder ,2016)
-
-> In addition, existing spaced-repetition models and word-retention prediction algorithms have mainly been applied to isolated "static learning" such as drills, flashcards, and fill-in-the-blank exercises. (2.2 Spaced Repetition and Practice, Settles & Meeder, 2016)
-
-これらの語彙保持のためのシステムを、実際のリアルタイム会話のコンテキストとシームレスに結合させ、AIからの動的な会話に対して最も適合するメモした表現をRAGによってマッチングして、「回答のヒント」としてリアルタイムに差し出す技術的アプローチはまだ十分に開拓されていません。つまり従来のアプリではこれらの語彙をその場面で咄嗟に調べたりすることは困難です。ここで本研究では、学習者個人のメモを意味検索(embedding)で取り出し、習得度・間隔反復で並べ替えて会話のその場で提示するシステム Mingo を設計・実装し、その有効性を検証します。
-
-> A technical approach that seamlessly combines these vocabulary-retention systems with the context of actual real-time conversation—matching, via RAG, the memorized expressions that best fit the AI's dynamic conversation and offering them as "answer hints" in real time—has not yet been sufficiently explored. In other words, with conventional apps it is difficult to look up such vocabulary on the spot. In this study, we design and implement Mingo, a system that retrieves the learner's own memos by semantic search (embedding), ranks them by mastery and spaced repetition, and presents them on the spot during conversation, and we evaluate its effectiveness.
 
 Mingoのメモ・ヒント機能の実装により、特に個人で言語学習を行う必要がある一般ユーザーに特に大きな影響を与えることが予測されます。
 

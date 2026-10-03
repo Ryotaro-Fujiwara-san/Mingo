@@ -46,6 +46,9 @@
 
 > If it is correct, the user's speech is analyzed at the phoneme level, and the results are analyzed by an LLM, which replies—again in natural language—with how the user should improve their pronunciation and linking. Whether or not there are corrections, the AI responds to the user's answer and asks a follow-up question. This is also transcribed. In the future, we would like to be able to add a replay feature for the AI's replies and hints, translation from the native language into the learning language, a search feature that visually displays grammar, words, and idioms (with colors and arrows) when the user enters text in the learning language, and a feature that presents memorized expressions as hints and visualizes the user's level of mastery.
 
+## 直面した課題 / Challenges Faced
+
+## 実装 / Implement
 ![リアルタイム会話機能2_page-0001](docs/images/image1.jpeg)
 
 *図1：全体のシステムの流れ*

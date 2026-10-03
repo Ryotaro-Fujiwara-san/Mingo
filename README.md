@@ -6139,35 +6139,7 @@ def cosine_similarity(a,b):
 今回の場合、内積は1×1 + 2×2 + 3×3  = 1 + 4 + 9 = 14、長さはnorm_a = √(1² + 2² + 3²) =14、長さはnorm_b = √(1² + 2² + 3²) =14となり、結果として14 ÷ (√14 × √14) = 14 ÷ 14 = 1となります。
 このテストは以下のようになります。
 
-> First, `import pytest` is used to import the pytest framework. The function below it imports the function to be tested from `main.py`.
-
-The input of the cosine similarity function is defined as follows:
-
-```python
-def cosine_similarity(a, b):
-```
-
-For this function, if the input vectors `a` and `b` point in the same direction, the result should be 1. If they are perpendicular to each other, the result should be 0. If they point in opposite directions, the result should be -1.
-
-First, `a` is set to `[1, 2, 3]`, and `b` is also set to `[1, 2, 3]`. Multiple dimensions are used as inputs because the `text-embedding-3-large` model used by Mingo generates embeddings with more than 3,000 dimensions. Therefore, it is preferable to use multiple input dimensions rather than testing the function with only a single value.
-
-In this case, the dot product is calculated as follows:
-
-`1 × 1 + 2 × 2 + 3 × 3 = 1 + 4 + 9 = 14`
-
-The magnitude (norm) of vector `a` is:
-
-`norm_a = √(1² + 2² + 3²) = √14`
-
-Similarly, the magnitude of vector `b` is:
-
-`norm_b = √(1² + 2² + 3²) = √14`
-
-Therefore, the cosine similarity is:
-
-`14 ÷ (√14 × √14) = 14 ÷ 14 = 1`
-
-Thus, because the two vectors are identical and point in exactly the same direction, the expected result is 1. The unit test is implemented as follows.
+> First, `import pytest` is used to import the pytest framework. The function below it imports the function to be tested from `main.py`.The input of the cosine similarity function is defined as follows:def cosine_similarity(a, b):For this function, if the input vectors `a` and `b` point in the same direction, the result should be 1. If they are perpendicular to each other, the result should be 0. If they point in opposite directions, the result should be -1.First, `a` is set to `[1, 2, 3]`, and `b` is also set to `[1, 2, 3]`. Multiple dimensions are used as inputs because the `text-embedding-3-large` model used by Mingo generates embeddings with more than 3,000 dimensions. Therefore, it is preferable to use multiple input dimensions rather than testing the function with only a single value.In this case, the dot product is calculated as follows:`1 × 1 + 2 × 2 + 3 × 3 = 1 + 4 + 9 = 14`The magnitude (norm) of vector `a` is:`norm_a = √(1² + 2² + 3²) = √14`Similarly, the magnitude of vector `b` is:`norm_b = √(1² + 2² + 3²) = √14`Therefore, the cosine similarity is:`14 ÷ (√14 × √14) = 14 ÷ 14 = 1`Thus, because the two vectors are identical and point in exactly the same direction, the expected result is 1. The unit test is implemented as follows.
 
 ```python
 def test_same_direction_is_1():
@@ -6180,6 +6152,7 @@ def test_same_direction_is_1():
 
 このテストは以下のようになります。
 
+> Here, `assert actual result == expected result` is used to determine whether the test passes or fails. If the actual result matches the expected result, the test passes; otherwise, it fails.In addition, `pytest.approx(0)` means that a value that is approximately 0 is considered acceptable. This is because computers may sometimes produce slightly different values when performing floating-point calculations.Next, a test is written to determine whether the vectors `A = [1, 0]` and `B = [0, 1]` are perpendicular.In this case, the dot product is:`1 × 0 + 0 × 1 = 0 + 0 = 0`The magnitude of vector `A` is:`norm_a = √(1² + 0²) = 1`Similarly, the magnitude of vector `B` is:`norm_b = √(0² + 1²) = 1`Therefore, the result is:`0 ÷ (1 × 1) = 0`Thus, because the two vectors are perpendicular, the expected result is 0.The test is implemented as follows.
 
 ```python
 def test_right_angle_is_0():
@@ -6188,6 +6161,9 @@ def test_right_angle_is_0():
 そしてA = [1, 2]、B = [-1, -2]というベクトルが反対であることを測るテストを書きます。
 今回の場合、内積は1×(-1) + 2×(-2) = -1 - 4 = -5、長さは norm_a = √(1² + 2²)  = √5、norm_b = √((-1)² + (-2)²)   = √5 で結果は -5 ÷ (√5 × √5) = -5 ÷ 5 = -1となります。
 このテストは以下のようになります。
+
+> Next, a test is written to determine whether the vectors `A = [1, 2]` and `B = [-1, -2]` point in opposite directions.In this case, the dot product is:`1 × (-1) + 2 × (-2) = -1 - 4 = -5`The magnitude of vector `A` is:`norm_a = √(1² + 2²) = √5`Similarly, the magnitude of vector `B` is:`norm_b = √((-1)² + (-2)²) = √5`Therefore, the cosine similarity is:`-5 ÷ (√5 × √5) = -5 ÷ 5 = -1`Thus, because the two vectors point in exactly opposite directions, the expected result is -1.The test is implemented as follows.
+
 
 ```python
 def test_opposite_direction_is_minus_1():
@@ -6198,6 +6174,8 @@ def test_opposite_direction_is_minus_1():
 ここでA = [1, 2]、B = [10, 20]（同じ向きで、長さが10倍）というベクトルが、向きだけを比較し、長さは無視するというようにします。
 内積は1×10 + 2×20  = 10 + 40 = 50、長さはnorm_a = √(1² + 2²)  = √5、norm_b = √(10² + 20²)   = √500 = 10√5で、結果は50 ÷ (√5 × 10√5) = 50 ÷ 50 = 1となります。
 このテストは以下のようになります。
+
+> Finally, it is necessary to verify that changes in the length of the vector caused by differences in the length of memo text in Mingo do not affect the cosine similarity result.In this test, `A = [1, 2]` and `B = [10, 20]` are used. These vectors point in the same direction, but vector `B` has a magnitude that is 10 times greater than that of vector `A`. This test verifies that cosine similarity compares only the direction of the vectors and does not depend on their magnitude.The dot product is:`1 × 10 + 2 × 20 = 10 + 40 = 50`The magnitude of vector `A` is:`norm_a = √(1² + 2²) = √5`Similarly, the magnitude of vector `B` is:`norm_b = √(10² + 20²) = √500 = 10√5`Therefore, the cosine similarity is:`50 ÷ (√5 × 10√5) = 50 ÷ 50 = 1`Thus, even though vector `B` is 10 times longer than vector `A`, the cosine similarity remains 1 because the two vectors have exactly the same direction.The test is implemented as follows.
 
 ```python
 def test_length_does_not_matter():
@@ -6212,6 +6190,7 @@ def test_length_does_not_matter():
 ユニットテストはコードのどれくらいの割合を実行できたか、どれくらいのバグを検出できたかを数値として客観的に確認できるため、テストの抜け漏れを防ぎ、いつテストを終了してよいかの明確な基準が得られます。
 またシステム全体の完成を待たずに部品ごとのバグを早期に発見・修正できるため、完成後に重大な障害が発生する確率を大幅に減らし、システムの信頼性や安全性に対する客観的な確信を高めることができます。
 
+> These tests can be considered black-box tests because they specify an externally observable expectation: “if this input is provided, this output should be produced.” In the original implementation, the magnitude of the vector could potentially change depending on the length of the memo text. However, because cosine similarity compares the direction of vectors rather than their magnitude, users can safely save memos and use them as hints regardless of the length of the memo text.There are several types of unit testing. For example, structural testing evaluates how much of the internal execution paths of a program are exercised by the tests (Zhu, Hall, & May, 1997, Section 1.3, “Categories of Test Data Adequacy Criteria”). One example is statement coverage, which requires every statement in a program to be executed at least once. Another is branch coverage, which tests all possible paths through conditional branches, such as both the “YES” and “NO” outcomes of an `if` statement (Zhu, Hall, & May, 1997, Section 1.1, “The Notion of Test Adequacy”).Another type is data-flow testing, which verifies whether the flow of data is correct from the point where a value is assigned to a variable to the point where that value is subsequently used.There is also mutation testing, in which small artificial faults are intentionally introduced into a program to determine whether the existing tests can correctly detect these faults. In addition, boundary value analysis focuses on values near the boundaries of conditions in order to identify errors in decision-making (Zhu, Hall, & May, 1997, Section 4.2, “Program-Based Input-Space Partitioning”).Unit testing makes it possible to objectively evaluate test coverage, such as the percentage of code executed and the number of faults detected. This helps reduce gaps and omissions in testing and provides clearer criteria for determining when testing can be considered sufficient.Furthermore, because unit testing allows bugs in individual components to be identified and corrected before the entire system is completed, it can significantly reduce the risk of serious failures occurring after deployment. As a result, it provides more objective confidence in the reliability and safety of the overall system.
 
 
 

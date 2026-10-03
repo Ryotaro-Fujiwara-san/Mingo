@@ -6219,6 +6219,7 @@ AWSへデプロイします。
 
 > We deploy to AWS.
 
+
 まずCIとは作ったプログラムを頻繁に合体させ、壊れていないか自動でテストする、いわゆる継続的統合といいます。(II. FOUNDATIONS,Shahin, M., Babar, M. A., & Zhu, L. ,2017)
 
 > First, CI—continuous integration—means frequently merging the programs we build and automatically testing whether anything is broken. (II. FOUNDATIONS, Shahin, M., Babar, M. A., & Zhu, L., 2017)

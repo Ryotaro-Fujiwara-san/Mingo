@@ -6119,14 +6119,109 @@ app.mount("/",StaticFiles(directory=FRONTEND_DIR,html = True),name = "frontend")
 
 テストはプログラムやアプリを作った時に、「期待通りに正しく動くか」「バグがないか」をあらかじめ確認する作業のこと(Abstract,Upulee Kanewala, James M. Bieman,2018)を言います。
 その中でユニットテストはプログラム全体ではなく、関数やメソッドなどの「一番小さな部品（ユニット）」ごとに分けて行うテストのことです。(3.2. RQ2: Are there special characteristics or faults in scientific software or its development that make testing difficult?,Upulee Kanewala, James M. Bieman,2018)のことです。これによりバグの場所がすぐにわかるだけではなく、細かい部品の段階で計算誤差や間違いを直しておくことで全体を組んだ時に大きなトラブルになるのを防げます。ソフトウェアのテストはまず関数やモジュールなどの「一つの部品」のテストを行い、それら部品同士を「組み合わせたとき」にうなく連動するかを確かめるテストである結合テストを行い、最後に全体テストを行うのが一般的です。
-今回テストする対象は、二つのベクトルの意味的な近さを測るコサイン類似度関数と今のHLRを計算する関数にします。これらは入力に対して、どちらも出力がある程度決まっていて、尚且つAIのAPIを呼び出さないためテストの対象に適切であると考えたからです。
+今回テストする対象は、二つのベクトルの意味的な近さを測るコサイン類似度関数にします。これらは入力に対して、どちらも出力がある程度決まっていて、尚且つAIのAPIを呼び出さないためテストの対象に適切であると考えたからです。
+
 今回はpytestを使用します。
+
+> Software testing refers to the process of checking in advance whether a program or application works correctly as expected and whether it contains bugs (Kanewala & Bieman, 2018).
+
+Among the different types of software testing, unit testing is a type of testing in which a program is divided into its smallest components, or “units,” such as individual functions and methods, and each unit is tested separately (Kanewala & Bieman, 2018, Section 3.2, “RQ2: Are there special characteristics or faults in scientific software or its development that make testing difficult?”). Unit testing not only makes it easier to identify the location of bugs, but also helps prevent major problems when the entire system is assembled by detecting and correcting calculation errors and other problems at the individual component level.
+
+In general, software testing begins with testing individual components, such as functions or modules. Next, integration testing is performed to verify whether these components work correctly together when they are combined. Finally, system-level testing is conducted to verify the behavior of the entire system.
+
+For this project, the cosine similarity function, which measures the semantic similarity between two vectors, will be selected as the target of unit testing. This function is considered suitable for testing because its output is relatively predictable for a given input and it does not require calls to an AI API.
+
+For the unit tests, pytest will be used.
+
 
 ```python
 import pytest
 from main import cosine_similarity,recall_probability
 ```
 これでまずimport pytestでpytestを取り出し、その下の関数でテストしたい関数をmain.pyから取り出します。
+そしてコサイン類似関数において、関数の入力は以下のようになります。
+def cosine_similarity(a,b):
+ここで入力aと入力bの二つが同じ向きなら1、直角なら0、反対なら-1となるべきです。
+
+まずaが1,2,3でbが1,2,3に設定します。このように複数の次元の入力にするのは、Mingoで使用しているOpenAI の text-embedding-3-large が作るは3000以上であるため、できるだけ複数の入力にする必要があるためです。
+今回の場合、内積は1×1 + 2×2 + 3×3  = 1 + 4 + 9 = 14、長さはnorm_a = √(1² + 2² + 3²) =14、長さはnorm_b = √(1² + 2² + 3²) =14となり、結果として14 ÷ (√14 × √14) = 14 ÷ 14 = 1となります。
+このテストは以下のようになります。
+
+> First, `import pytest` is used to import the pytest framework. The function below it imports the function to be tested from `main.py`.
+
+The input of the cosine similarity function is defined as follows:
+
+```python
+def cosine_similarity(a, b):
+```
+
+For this function, if the input vectors `a` and `b` point in the same direction, the result should be 1. If they are perpendicular to each other, the result should be 0. If they point in opposite directions, the result should be -1.
+
+First, `a` is set to `[1, 2, 3]`, and `b` is also set to `[1, 2, 3]`. Multiple dimensions are used as inputs because the `text-embedding-3-large` model used by Mingo generates embeddings with more than 3,000 dimensions. Therefore, it is preferable to use multiple input dimensions rather than testing the function with only a single value.
+
+In this case, the dot product is calculated as follows:
+
+`1 × 1 + 2 × 2 + 3 × 3 = 1 + 4 + 9 = 14`
+
+The magnitude (norm) of vector `a` is:
+
+`norm_a = √(1² + 2² + 3²) = √14`
+
+Similarly, the magnitude of vector `b` is:
+
+`norm_b = √(1² + 2² + 3²) = √14`
+
+Therefore, the cosine similarity is:
+
+`14 ÷ (√14 × √14) = 14 ÷ 14 = 1`
+
+Thus, because the two vectors are identical and point in exactly the same direction, the expected result is 1. The unit test is implemented as follows.
+
+```python
+def test_same_direction_is_1():
+    assert cosine_similarity([1,2,3],[1,2,3]) == pytest.approx(1,0)
+```
+ここでassert 実際の結果 == 期待する結果とすることで期待する結果であれば合格、そうでなければ不合格とします。
+またpytest.approx(1,0)はほぼ0ならOKという意味です。これはコンピュータは少数をほんの少しずれた値で計算することがあるからです。
+次にA = [1, 0]、B = [0, 1]というベクトルが直角であるかを測るテストを書きます。
+今回の場合、内積は1×0 + 0×1 = 0 + 0 = 0、長さはnorm_a = √(1² + 0²) = 1、norm_b = √(0² + 1²) = 1で結果は0 ÷ (1 × 1) = 0となります。
+
+このテストは以下のようになります。
+
+
+```python
+def test_right_angle_is_0():
+    assert cosine_similarity([1, 0], [0, 1]) == pytest.approx(0,0)
+```
+そしてA = [1, 2]、B = [-1, -2]というベクトルが反対であることを測るテストを書きます。
+今回の場合、内積は1×(-1) + 2×(-2) = -1 - 4 = -5、長さは norm_a = √(1² + 2²)  = √5、norm_b = √((-1)² + (-2)²)   = √5 で結果は -5 ÷ (√5 × √5) = -5 ÷ 5 = -1となります。
+このテストは以下のようになります。
+
+```python
+def test_opposite_direction_is_minus_1():
+    assert cosine_similarity([1, 2], [-1, -2]) == pytest.approx(-1,0)
+```
+
+最後にMingoでメモの文の長さでベクトルの長さが変わっても、結果に影響しないことを確認する必要があります。
+ここでA = [1, 2]、B = [10, 20]（同じ向きで、長さが10倍）というベクトルが、向きだけを比較し、長さは無視するというようにします。
+内積は1×10 + 2×20  = 10 + 40 = 50、長さはnorm_a = √(1² + 2²)  = √5、norm_b = √(10² + 20²)   = √500 = 10√5で、結果は50 ÷ (√5 × 10√5) = 50 ÷ 50 = 1となります。
+このテストは以下のようになります。
+
+```python
+def test_length_does_not_matter():
+    assert cosine_similarity([1, 2], [10, 20]) == pytest.approx(1,0)
+```
+これらのテストはブラックボックステストとなります。これは「こう入れたら、こう出るはず」という外から見た約束を明記したテストであるためです。
+元々、メモの文の長さでベクトルに長さが変わる可能性がありましたが、ユーザーはそれに関わらずに安心してメモを保存し、ヒントとして利用することができました。
+ユニットテストには複数の種類があります。例えばプログラム内部の処理ルートをどれくらい実行できたかを基準にする構造テストがあります。(1.3 Categories of Test Data Adequacy Criteria,Zhu, Hall & May ,1997)
+例えばプログラム内の全ての命令を少なくとも一回は実行させるテストである命令網羅や、「もし～なら」などのの条件分岐における「YES/NO」の全てのルートを通るテストです。(1.1 The Notion of Test Adequacy,Hall & May ,1997)
+また変数に値を入力してから、その値を使うまでのデータの流れが正しいかを確認するテストであるデータフローテストがあります。
+またプログラムにあえて小さな人口バグを混入させ、作成したテストがそのバグを正しく検出して退治できるかを調べるテストであるミューテーションテストや、条件判定の境目となる数値を重点的にテストし、判定のミスを見つけ出す境界値分析テストがあります(4.2 Program-Based Input-Space Partitioning,Zhu, Hall & May ,1997)
+ユニットテストはコードのどれくらいの割合を実行できたか、どれくらいのバグを検出できたかを数値として客観的に確認できるため、テストの抜け漏れを防ぎ、いつテストを終了してよいかの明確な基準が得られます。
+またシステム全体の完成を待たずに部品ごとのバグを早期に発見・修正できるため、完成後に重大な障害が発生する確率を大幅に減らし、システムの信頼性や安全性に対する客観的な確信を高めることができます。
+
+
+
 
 AWSへデプロイします。
 
@@ -6236,6 +6331,7 @@ Conneau, A., et al. (2022). FLEURS: Few-shot Learning Evaluation of Universal Re
 
 Shahul Es, Jithin James, Luis Espinosa-Anke, Steven Schockaert（2023）,RAGAS: Automated Evaluation of Retrieval Augmented Generation
 
+Zhu, Hall & May (1997). Software unit test coverage and adequacy. ACM Computing Surveys
 
 
 Retrieval-Augmented Generation for　Knowledge-Intensive NLP Tasks

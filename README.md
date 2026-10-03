@@ -6219,6 +6219,56 @@ AWSへデプロイします。
 
 > We deploy to AWS.
 
+DockerfileとはMingoのイメージの作り方を書いたレシピです。順番としてはベースのイメージを用意し、道具を入れ、Mingoのコードを入れます。そして起動のやり方を書きます。
+このレシピがあれば、自分のPCでもAWSでも全く同じイメージが作れます。
+
+まずNode.js 22 が入った小さめの Linux を材料にします。
+```python
+FROM node:22-slim AS frontend
+```
+
+次に箱の中の /app/frontend フォルダに移動します。
+
+```python
+WORKDIR /app/frontend
+```
+
+そしてPCの frontend から、ライブラリの一覧表の2ファイルだけを、箱の中の今のフォルダ（./）にコピーします。
+
+```python
+COPY frontend/package.json frontend/package-lock.json ./
+```
+一覧表どおりにライブラリをインストールします。
+
+```python
+RUN npm ci
+```
+そしてfrontend の残りのファイル（src など）を全部コピーします。
+
+```python
+COPY frontend/ ./
+```
+React をビルドします。
+```python
+RUN npm run build
+```
+次にFastAPIを動かす箱を作ります。
+まずPython 3.14 が入った小さめの Linux（Debian 12、愛称「bookworm」）を材料にします。
+```python
+FROM python:3.14-slim-bookworm
+```
+また一覧表どおりにインストールします。
+```python
+RUN pip install --no-cache-dir -r requirements.txt
+```
+そして1段目の箱から、dist だけを持ってきます。
+```python
+COPY --from=frontend /app/frontend/dist /app/frontend/dist
+```
+最後に箱を起動したら何をするのかを決定します。
+```python
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
 
 まずCIとは作ったプログラムを頻繁に合体させ、壊れていないか自動でテストする、いわゆる継続的統合といいます。(II. FOUNDATIONS,Shahin, M., Babar, M. A., & Zhu, L. ,2017)
 

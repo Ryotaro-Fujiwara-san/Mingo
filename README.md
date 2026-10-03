@@ -6123,15 +6123,7 @@ app.mount("/",StaticFiles(directory=FRONTEND_DIR,html = True),name = "frontend")
 
 今回はpytestを使用します。
 
-> Software testing refers to the process of checking in advance whether a program or application works correctly as expected and whether it contains bugs (Kanewala & Bieman, 2018).
-
-Among the different types of software testing, unit testing is a type of testing in which a program is divided into its smallest components, or “units,” such as individual functions and methods, and each unit is tested separately (Kanewala & Bieman, 2018, Section 3.2, “RQ2: Are there special characteristics or faults in scientific software or its development that make testing difficult?”). Unit testing not only makes it easier to identify the location of bugs, but also helps prevent major problems when the entire system is assembled by detecting and correcting calculation errors and other problems at the individual component level.
-
-In general, software testing begins with testing individual components, such as functions or modules. Next, integration testing is performed to verify whether these components work correctly together when they are combined. Finally, system-level testing is conducted to verify the behavior of the entire system.
-
-For this project, the cosine similarity function, which measures the semantic similarity between two vectors, will be selected as the target of unit testing. This function is considered suitable for testing because its output is relatively predictable for a given input and it does not require calls to an AI API.
-
-For the unit tests, pytest will be used.
+> Software testing refers to the process of checking in advance whether a program or application works correctly as expected and whether it contains bugs (Kanewala & Bieman, 2018).Among the different types of software testing, unit testing is a type of testing in which a program is divided into its smallest components, or “units,” such as individual functions and methods, and each unit is tested separately (Kanewala & Bieman, 2018, Section 3.2, “RQ2: Are there special characteristics or faults in scientific software or its development that make testing difficult?”). Unit testing not only makes it easier to identify the location of bugs, but also helps prevent major problems when the entire system is assembled by detecting and correcting calculation errors and other problems at the individual component level.In general, software testing begins with testing individual components, such as functions or modules. Next, integration testing is performed to verify whether these components work correctly together when they are combined. Finally, system-level testing is conducted to verify the behavior of the entire system.For this project, the cosine similarity function, which measures the semantic similarity between two vectors, will be selected as the target of unit testing. This function is considered suitable for testing because its output is relatively predictable for a given input and it does not require calls to an AI API.For the unit tests, pytest will be used.
 
 
 ```python

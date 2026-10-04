@@ -1,0 +1,14 @@
+**/.env
+**/.env.*
+**/memo.db
+**/.venv
+**/__pycache__
+**/node_modules
+frontend/dist
+.git
+*.docx
+~$*
+start-mingo.bat
+README.md
+docs
+mingo-experiment

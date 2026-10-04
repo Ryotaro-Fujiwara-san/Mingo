@@ -424,7 +424,7 @@ def get_hint(item:HintIn,user:dict = Depends(limited_user)):
     scored.sort(key=lambda s:s[0], reverse=True)#類似度s[0]が高い順に並べる。（reverse=Trueで適用する）特にsimが高い順に並べる
     relevant = scored[:5]#上位5件
     relevant.sort(key=lambda s:s[1])#さらにその中で想起確率s[1]が低い順
-    top = relevant[:4]#さらにその中の上位５件
+    top = relevant[:4]#さらにその中の上位4件
     hints = [{"type":t,"text":tx} for sim,p,t,tx in top]
     example = make_example(hints,item.query)
     return {"hints":hints,"example":example.get("example","")}

@@ -2,9 +2,23 @@
 
 ## 概要 / Overview
 
+Mingo は、AIと音声で会話しながら外国語を身につけるための学習アプリです。ユーザーがAIの役柄と場面を決めて話しかけると、Gemini のリアルタイム音声AIがその役になりきって返事をします。発言はその場で文字起こしされ、文法のチェックや、Azure の音声評価による発音のアドバイスも返ってきます。
+
+覚えたい表現をメモとして登録すると、AIが単語・イディオム・構文に分けて保存します。会話中は、AIの直前の発言に意味が近く、そろそろ忘れかけている表現が、例文付きのヒントとして表示されます。表現を実際に使えたかどうかはAIが判定し、その結果で習得度が更新されます。ヒントなしで何度も使えた表現は習得済みになり、進み具合はダッシュボードで確認できます。
+
+ほかにも、入力した文を節ごとに分解して意味と文法を解説する文法検索や、速度を変えて読み上げる発音検索があります。自分のPCで動かすときだけは、作業中のファイルをAIに説明してもらうコード分析機能も使えます。
+
+仕組みとしては、画面がReact、サーバーがFastAPIです。ログインにはAWSのCognitoを使い、サーバーへのリクエストはすべてJWTで本人確認をします。メモや利用回数はユーザーごとに分けて保存し、有料APIの使いすぎを防ぐために1日あたりの呼び出し回数にも上限を設けています。現在はDockerコンテナとしてAWSのECS Express Modeで動いていて、APIキーはSecrets Managerで管理しています。
+
+> Mingo is an app for learning a foreign language by talking with an AI by voice. The user chooses a role for the AI and a scene, and Gemini's real-time voice AI plays that role and replies. What the user says is transcribed as they speak, and they get grammar checks and pronunciation advice based on Azure's speech assessment.When the user saves an expression they want to learn as a memo, the AI splits it into words, idioms and sentence patterns and stores them. During a conversation, Mingo shows hints with example sentences for expressions that are close in meaning to what the AI just said and that the user is starting to forget. The AI judges whether the user actually used each expression, and that result updates how well it is learned. An expression the user uses several times without a hint counts as mastered, and progress can be checked on a dashboard.Mingo also has a grammar search that splits a sentence into clauses and explains their meaning and grammar, and a pronunciation search that reads text aloud at an adjustable speed. A code analysis feature, where the AI explains the file you are working on, is available only when running on your own PC.The front end is built with React and the server with FastAPI. Login uses AWS Cognito, and every request to the server is checked with a JWT. Memos and usage counts are stored separately for each user, and there is a daily limit on calls so paid APIs aren't overused. Mingo currently runs as a Docker container on AWS ECS Express Mode, with API keys stored in Secrets Manager.
+
+
 以下がアプリへのリンクです
 > Here is the link to the app.
+
 https://mi-b103ab290b28405e95a16ce052d67752.ecs.ap-northeast-1.on.aws/
+
+
 
 ## 序論 / Introduction
 

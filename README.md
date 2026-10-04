@@ -1,5 +1,11 @@
 # Mingo
 
+## 概要 / Overview
+
+以下がアプリへのリンクです
+> Here is the link to the app.
+https://mi-b103ab290b28405e95a16ce052d67752.ecs.ap-northeast-1.on.aws/
+
 ## 序論 / Introduction
 
 言語学習において、最も危惧される問題は調べた言語を使わずに放置してしまうと、すぐに忘れてしまいます。これを「massed practice」と呼びます。そしてそれらの表現を使ったり復習したりしないと、「忘却曲線」に従って記憶は時間と共に指数関数敵に減衰し、最終的には思い出せなくなります。(Settles & Meeder ,2016)

@@ -5276,7 +5276,7 @@ new_items = []#新しい要素を格納する変数
 
 > With this, for example, even if "AI and AI" is entered, only "AI" is shown.
 
-### 2026/9/26~
+### 2026/9/26~10/10
 
 Mingoで使用される音声録音には単なる発音内容だけではなく、話者の身元や性別、推定年齢、母語、感情状態や健康状態などの豊富な個人情報が含まれます。
 
@@ -6365,7 +6365,9 @@ Mingoは フロント（React/TypeScript） と サーバー（FastAPI/Python）
 
 > In CD (deployment), we make Mingo, which runs on our own PC, available to other users. The screen is placed on S3 + CloudFront, and the server on EC2.
 
-
+### 2026/10/10
+Gemini Liveは15分ほどでタイムアウトしてしまいます。
+また発音添削機能が文法に問題がなくても起動しないときがあります。
 
 ## 引用 / References
 

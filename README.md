@@ -6639,6 +6639,11 @@ Andreas Nautsch,Preserving privacy in speaker and speech characterisation(2019)
 
 Jaap-Henk Hoepman,Privacy Design Strategies(2024)
 
+AWS,What is Amazon CloudWatch?, What is Amazon CloudWatch? - Amazon CloudWatch
+
+B.P.Lientz(1978),Characteristics of Application Software Maintenance
+
+
 ダイレクト出版株式会社(2024),【OpenAI Embeddings API】文字列をベクトル化して意味の近さを計測してみよう,<https://qiita.com/kana_zzzz/items/aa1a92c9c35d566e4194>
 
 Shahin, M., Babar, M. A., & Zhu, L. (2017). Continuous Integration, Delivery and Deployment: A Systematic Review on Approaches, Tools, Challenges and Practices. IEEE Access, 5, 3909–3943.

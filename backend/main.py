@@ -28,7 +28,8 @@ from fastapi.staticfiles import StaticFiles
 
 ##== DBへの接続を開く関数==##
 def get_conn():
-    return sqlite3.connect("memo.db")
+    db_path = os.environ.get("MEMO_DB_PATH", "memo.db")  # 環境変数からDBパスを取得、なければデフォルトでmemo.db
+    return sqlite3.connect(db_path)
 
 
 ##== メモ・ヒント機能用のテーブルを作る関数を定義 ==##
@@ -67,7 +68,7 @@ def init_memo_db():
 
     conn.commit()#変更を確定し、テーブルを作成
     conn.close()#DBへの接続を閉じる
-init_memo_db()#起動時にメモ・ヒント用のDBを起動（memo_itemとmasteredの両方を作る）
+
 
 ##== １ユーザーの１日あたりの関数呼び出し上限 ==##
 LIMITS = {
@@ -75,8 +76,8 @@ LIMITS = {
     "/hint":30,
     "/interaction":1000,
     "/grammar_search":50,
-    "/pronounce":50,
-    "/realtime":20,
+    "/pronounce":200,
+    "/realtime":200,
 }
 
 ##== 今日の呼び出し回数を+1して、+1した後の回数を返す関数 ==##
@@ -150,6 +151,11 @@ def build_instructions(config:SessionConfig):
 
 ##== エンドポイントを作成する ==##
 app = FastAPI()#サーバー本体
+
+@app.on_event("startup")#サーバーが立ち上がったときに実行する
+def startup():
+    init_memo_db()#DBのテーブルを作る
+    
 load_dotenv()#.envからAPIキーを読む
 API_KEY = os.environ.get("GEMINI_API_KEY")#.envからGeminiのキーを取り出す
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")#.envからOpenAIのキーを取り出す
@@ -212,7 +218,7 @@ async def analyze_turn(user_text,utterance_audio,websocket,config:SessionConfig,
 ##== 文法アドバイス ==##
 async def check_grammar(text,websocket,config:SessionConfig,turn_id):
     prompt = (
-        "次の文章が文法的に正しいか判定して、必ずJSONだけで返す:\n"
+        "次の文章が文法的に正しいか判定して、必ずJSON（辞書）だけで返す。重複は無視して:\n"
         '{"correct":true/false,"corrected":"修正分","explanation":"理由の解説"}\n'
         f"explanationは{config.explainLang}で書くこと\n"
         f"文:{text}"

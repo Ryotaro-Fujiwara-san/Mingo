@@ -1,5 +1,5 @@
 
-name: Deploy Mingo to ECS
+name: Deploy Mingo to ECS Express
 
 on:
   push:
@@ -15,13 +15,23 @@ concurrency:
   group: mingo-production-deploy
   cancel-in-progress: false
 
+env:
+  AWS_REGION: ap-northeast-1
+  AWS_ACCOUNT_ID: "656051538064"
+  ECS_CLUSTER: default
+  ECS_SERVICE: mingo
+  ECR_REPOSITORY: mingo
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -39,13 +49,9 @@ jobs:
     if: ${{ vars.AUTO_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: ap-northeast-1
-      ECS_CLUSTER: default
-      ECS_SERVICE: mingo
-
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -53,172 +59,29 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Verify AWS identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          aws sts get-caller-identity
-
-      - name: Get current task definition and ECR repository
-        id: current
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== Checking ECS service ==="
-          echo "Region: $AWS_REGION"
-          echo "Cluster: $ECS_CLUSTER"
-          echo "Service: $ECS_SERVICE"
-
-          # Retrieve the complete ECS service response.
-          aws ecs describe-services \
-            --region "$AWS_REGION" \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --output json > services.json
-
-          echo "=== ECS service response ==="
-          jq '{
-            failures: .failures,
-            services: [
-              .services[]? | {
-                serviceName,
-                status,
-                taskDefinition
-              }
-            ]
-          }' services.json
-
-          # Extract the task definition ARN from the actual response.
-          TASK_DEFINITION_ARN="$(jq -r \
-            '.services[]? | select(.serviceName == "mingo") | .taskDefinition // empty' \
-            services.json)"
-
-          if [ -z "$TASK_DEFINITION_ARN" ] || \
-             [ "$TASK_DEFINITION_ARN" = "null" ] || \
-             [ "$TASK_DEFINITION_ARN" = "None" ]; then
-            echo "::error::No task definition ARN was returned for ECS service mingo."
-            echo "Check the full ECS service response above."
-            exit 1
-          fi
-
-          echo "Task definition ARN: $TASK_DEFINITION_ARN"
-
-          # Retrieve the task definition.
-          aws ecs describe-task-definition \
-            --region "$AWS_REGION" \
-            --task-definition "$TASK_DEFINITION_ARN" \
-            --query taskDefinition \
-            --output json > task-definition.json
-
-          CURRENT_IMAGE="$(jq -r \
-            '.containerDefinitions[0].image // empty' \
-            task-definition.json)"
-
-          if [ -z "$CURRENT_IMAGE" ] || \
-             [ "$CURRENT_IMAGE" = "None" ]; then
-            echo "::error::No container image found in the task definition."
-            exit 1
-          fi
-
-          echo "Current image: $CURRENT_IMAGE"
-
-          # Derive the ECR repository URI from the image.
-          REPOSITORY_URI="${CURRENT_IMAGE%@*}"
-          REPOSITORY_URI="${REPOSITORY_URI%:*}"
-          REGISTRY="${REPOSITORY_URI%%/*}"
-
-          if [ "$REGISTRY" = "$REPOSITORY_URI" ] || \
-             [[ "$REGISTRY" != *.dkr.ecr.*.amazonaws.com ]]; then
-            echo "::error::The current image is not an ECR image: $CURRENT_IMAGE"
-            exit 1
-          fi
-
-          echo "task_definition_arn=$TASK_DEFINITION_ARN" >> "$GITHUB_OUTPUT"
-          echo "repository_uri=$REPOSITORY_URI" >> "$GITHUB_OUTPUT"
-          echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
-
       - name: Log in to Amazon ECR
-        shell: bash
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
         env:
-          ECR_REGISTRY: ${{ steps.current.outputs.registry }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          aws ecr get-login-password --region "$AWS_REGION" \
-            | docker login \
-                --username AWS \
-                --password-stdin "$ECR_REGISTRY"
-
-      - name: Build and push image
-        shell: bash
-        env:
-          IMAGE_URI: ${{ steps.current.outputs.repository_uri }}:${{ github.sha }}
-        run: |
-          set -euo pipefail
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           docker build --file Dockerfile --tag "$IMAGE_URI" .
           docker push "$IMAGE_URI"
 
-      - name: Register task definition and deploy
-        shell: bash
-        env:
-          IMAGE_URI: ${{ steps.current.outputs.repository_uri }}:${{ github.sha }}
-          TASK_DEFINITION_ARN: ${{ steps.current.outputs.task_definition_arn }}
-        run: |
-          set -euo pipefail
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
-          echo "Preparing new task definition..."
-
-          aws ecs describe-task-definition \
-            --region "$AWS_REGION" \
-            --task-definition "$TASK_DEFINITION_ARN" \
-            --query taskDefinition \
-            --output json > task-definition.json
-
-          jq --arg image "$IMAGE_URI" '
-            .containerDefinitions[0].image = $image
-            | del(
-                .taskDefinitionArn,
-                .revision,
-                .status,
-                .requiresAttributes,
-                .compatibilities,
-                .registeredAt,
-                .registeredBy,
-                .deregisteredAt
-              )
-          ' task-definition.json > task-definition-input.json
-
-          echo "Registering new task definition..."
-
-          NEW_TASK_DEFINITION_ARN="$(aws ecs register-task-definition \
-            --region "$AWS_REGION" \
-            --cli-input-json file://task-definition-input.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)"
-
-          if [ -z "$NEW_TASK_DEFINITION_ARN" ] || \
-             [ "$NEW_TASK_DEFINITION_ARN" = "None" ]; then
-            echo "::error::Failed to register the new task definition."
-            exit 1
-          fi
-
-          echo "New task definition: $NEW_TASK_DEFINITION_ARN"
-
-          echo "Updating ECS service..."
-
-          aws ecs update-service \
-            --region "$AWS_REGION" \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --task-definition "$NEW_TASK_DEFINITION_ARN"
-
-          echo "Waiting for ECS service to become stable..."
-
-          aws ecs wait services-stable \
-            --region "$AWS_REGION" \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE"
-
-          echo "Deployment completed successfully."
+      - name: Deploy to ECS Express
+        uses: aws-actions/amazon-ecs-deploy-express-service@v1
+        with:
+          service-name: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          image: ${{ env.IMAGE_URI }}
+          execution-role-arn: arn:aws:iam::656051538064:role/ecsTaskExecutionRole
+          infrastructure-role-arn: arn:aws:iam::656051538064:role/ecsInfrastructureRoleForExpressServices

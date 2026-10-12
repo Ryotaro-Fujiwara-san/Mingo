@@ -6366,6 +6366,233 @@ Mingoは フロント（React/TypeScript） と サーバー（FastAPI/Python）
 > In CD (deployment), we make Mingo, which runs on our own PC, available to other users. The screen is placed on S3 + CloudFront, and the server on EC2.
 
 ### 2026/10/10
+
+今回はまず結合テストを行いたいと思います。
+ここではユーザー間のデータ分離が実行できるか、そしてメモの登録から削除までを一貫して行えるかをテストします。
+ここで結合テストはユーザー間のデータ分離が実行できるかであり、システムテストはてメモの登録から削除までを一貫して行えるかに焦点を当てます。
+ユーザー間のデータ分離では、まずユーザーAのダッシュボードにBのメモが出ないことを確認し、BがAのメモを削除しようとしても、Aのメモが残ることを確認します。
+今回のテスト対象は以下のエンドポイントです。
+まずメモを保存するエンドポイント
+
+> First, we will conduct integration testing to verify that data is properly isolated between users and that the entire process, from memo creation to deletion, works correctly.Here, integration testing focuses on verifying data isolation between users, while system testing focuses on validating the complete workflow from memo creation to deletion.To test data isolation, we will first confirm that User B's memos do not appear on User A's dashboard. We will then verify that when User B attempts to delete User A's memo, User A's memo remains intact.The following endpoints will be tested.First, the endpoint for saving memos.
+
+```python
+#== メモを保存する機能 ==#
+@app.post("/memo")
+def save_memo(item:MemoIn,user:dict = Depends(limited_user)):
+    user_id = user["sub"]#ログイン中のユーザーID
+    result = split_memo(item.text)
+    conn = get_conn()
+
+    #重複を除いた新しい要素だけを集める
+    new_items = []#新しい要素を格納する変数
+    seen_texts = set()#同じ値が重複しない集合を作成
+    for el in result["items"]:
+        text = el["text"]#表現のみ格納
+        exists = conn.execute("SELECT 1 FROM memo_item WHERE user_id = ? AND text = ?",(user_id,el["text"],)).fetchone()
+        if not exists and text not in seen_texts:#DBにも無く、今回の処理中にも重複して無ければ
+            new_items.append(el)#表現が重複していなければ、その値を新しい要素を格納する変数に格納する
+            seen_texts.add(text)#一時的に今回の処理の間だけ表現を保存
+    #新しい要素のtextをまとめてベクトル化する
+    if new_items:
+        vectors = embed_texts([el["text"] for el in new_items])
+        for el,vector in zip(new_items,vectors):
+            conn.execute("INSERT INTO memo_item(user_id,type,text,vector) VALUES(?,?,?,?)",(user_id,el["type"],el["text"],vector,))
+    conn.commit()
+    conn.close()
+    return{"status":"SAVED"}#フロントにJSONで返答する
+```
+次に進捗ダッシュボードに必要な情報を取得する機能
+
+>　Next, the functionality for retrieving the data required by the progress dashboard.
+
+```python
+#== 進捗ダッシュボードに必要な情報を取得する機能 ==#
+@app.get("/dashboard")
+def dashboard(user:dict = Depends(get_current_user)):
+    user_id = user["sub"]
+    conn = get_conn()
+    rows = conn.execute("SELECT id,type,text,hint_free_success FROM memo_item WHERE user_id = ?",(user_id,)).fetchall()
+    mastered_count = conn.execute("SELECT COUNT(*) FROM mastered WHERE user_id = ?",(user_id,)).fetchone()[0]#masterdから習得した表現（行）の数を習得し、(?.)タプルから[0]で?のみ取得する
+    conn.close()
+    learning = [{"id":id_,"type":type_,"text":text_,"hint_free_success":hfs_} for id_,type_,text_,hfs_ in rows]#rows = [(1,"word","juicy",2), (2,"idiom","get rid of",0)]から{"id":1,"type":"word","text":"juicy","hint_free_success":2},{"id":2,"type":"idiom","text":"get rid of","hint_free_success":0}のように(id, type, text, hint_free_success)の各行をid_, type_, text_, hfs_の4つの変数に分けて取り出し、{"id":id_, "type":type_, "text":text_, "hint_free_success":hfs_}という辞書を作る
+    return{"mastered_count":mastered_count,"learning":learning}
+```
+最後にメモを削除する機能です。
+>　Finally, the functionality for deleting memos.
+
+```python
+#== メモの表現を削除する機能 ==#
+@app.delete("/delete")
+def delete_memo(item:DeleteIn,user:dict = Depends(get_current_user)):
+    conn = get_conn()
+    conn.execute("DELETE FROM memo_item WHERE id=? AND user_id=?",(item.id,user["sub"]))
+    conn.commit()
+    conn.close()
+    return{"status":"deleted"}
+```
+まず今の状態では、DB接続先がmemo.dbに固定されています。
+>　First, the database connection is currently hardcoded to memo.db.
+
+```python
+#== DBへの接続を開く関数==##
+def get_conn():
+    return sqlite3.connect("memo.db")
+```
+つまり、アプリはいつも同じ名前のDBファイルを開きます。テストもそのまま実行すると、開発中のデータが入ったDBを使ってしまう恐れがあります。
+そこでどのDBファイルを使うかを設定で切り替えられるようにします。
+
+>　In other words, the application always opens a database file with the same name. If we run tests without making any changes, they may use the database containing development data.Therefore, we will make it possible to switch between database files through configuration settings.
+
+```python
+##== DBへの接続を開く関数==##
+def get_conn():
+    db_path = os.environ.get("MEMO_DB_PATH", "memo.db")  # 環境変数からDBパスを取得、なければデフォルトでmemo.db
+    return sqlite3.connect(db_path)
+```
+ここで、.get("MEMO_DB_PATH", "memo.db")で「MINGO_DB_PATHという環境変数があればその値を返す。なければ"memo.db"を返す」という意味です。
+また現在はアプリ起動時にすぐにメモ・ヒント用のDBを起動しています。
+
+>　Here, .get("MEMO_DB_PATH", "memo.db") means that if the MEMO_DB_PATH environment variable exists, its value is returned; otherwise, "memo.db" is returned.Currently, the application also initializes the database for memos and hints immediately when the application starts.
+
+```python
+init_memo_db()#起動時にメモ・ヒント用のDBを起動（memo_itemとmasteredの両方を作る）
+```
+これを.on_event("startup")という「アプリ起動時」の処理を登録する機能を使用し、テスト側がDBパスを設定してからアプリを起動すれば、テスト用DBにテーブルが作られるようにすることで、本番では環境変数を設定しなければ、今までどおりmemo.dbが使われるようにします。
+
+> We will use .on_event("startup") to register a function that runs when the application starts. This allows the test environment to set the database path before starting the application, so that the tables are created in the test database. In production, if no environment variable is set, the application will continue to use memo.db as before.
+
+```python
+@app.on_event("startup")#サーバーが立ち上がったときに実行する
+def startup():
+    init_memo_db()#DBのテーブルを作る
+```
+今回やることは、ユーザーAのダッシュボードにBのメモが出ないことを確認し、BがAのメモを削除しようとしても、Aのメモが残ることを確認することです。
+ここで大事なのは、AとBでDBを分けないことです。別々のDBにすると、お互いのメモが見えないのは当然なので、ユーザーごとの分離を確かめられません。テスト用DBを使うのは、開発データを守るためです。その1つのテスト用DBにAとB両方のメモを保存します。まずauth.pyが起動時にCognito設定を要求するため、テスト用の値を用意します。pytestがテスト実行前にこの設定を読み込み、テスト用の環境変数を設定できるようにします。
+
+> The goal of this test is to verify that User B's memos do not appear on User A's dashboard and that User A's memo remains intact even when User B attempts to delete it.The important point here is that Users A and B must share the same database. If we use separate databases, it is natural that they cannot see each other's memos, so we cannot properly verify user-level data isolation. We use a test database to protect development data, but both Users A and B will store their memos in the same test database.First, since auth.py requires Cognito configuration at startup, we will prepare test values. This will allow pytest to load the configuration and set the test environment variables before running the tests.
+
+```python
+import os
+
+os.environ.update({
+    "COGNITO_REGION": "test-region",
+    "COGNITO_USER_POOL_ID": "test-pool",
+    "COGNITO_APP_CLIENT_ID": "test-client",
+    "GEMINI_API_KEY": "test-key",
+    "OPENAI_API_KEY": "test-key",
+})
+```
+テストの流れを短く書くと、テスト用DBを1つ用意 → Aが登録 → Bが登録 → Aの表示を確認 → BがAのメモ削除を試す → Aのメモが残っているか確認するといった流れになります。
+まず必要な道具を読み込みます。
+
+> To summarize the test flow, we will create a single test database → User A creates a memo → User B creates a memo → verify what User A sees → User B attempts to delete User A's memo → verify that User A's memo still exists.First, we will import the necessary tools.
+
+```python
+import json
+from fastapi.testclient import TestClient
+import main
+```
+ここでjsonは、テスト用のベクトルをJSON文字列にするために使います。TestClientは、アプリを起動してAPIにリクエストを送るテスト用クライアントです。mainは、テスト対象のFastAPIアプリや関数が定義されているbackend/main.pyを読み込みます。
+まずpytestのmonkeypatchを使って、mainモジュール内の関数をテスト中だけ別の関数に差し替えるようにします。monkeypatch.setattrの基本形は次のとおりです。
+
+> Here, json is used to convert test vectors into JSON strings. TestClient is a testing client that starts the application and sends requests to its API. main imports backend/main.py, where the FastAPI application and the functions being tested are defined.First, we will use pytest's monkeypatch fixture to temporarily replace functions in the main module with alternative functions during testing. The basic syntax of monkeypatch.setattr is as follows.
+
+```python
+monkeypatch.setattr(対象のモジュール, "属性名", 差し替え後の値)
+```
+ここで、スト中にmain.split_memo("memo-a")が呼ばれると、Geminiを呼ぶ代わりに次の値を返すようにします。
+>　During the test, when main.split_memo("memo-a") is called, it will return the following value instead of calling Gemini.
+```python
+{"items": [{"type": "word", "text": "memo-a"}]}
+```
+これを実現するために、短い関数を一行で作る書き方であるlambda text: ...という関数を差し替え後の値として活用したいとおもいます。
+>　To achieve this, I will use lambda text: ... as the replacement value. A lambda is a concise way to define a short, single-line function.
+```python
+monkeypatch.setattr(main, "split_memo", lambda text:{"items": [{"type": "word", "text": "memo-a"}]})  
+```
+同じようにメモをベクトル化する作業も同様の処理を施したいと思います。
+>　Similarly, I will apply the same approach to the process of converting memos into vector embeddings.
+
+```python
+monkeypatch.setattr(main,"embed_texts",lambda texts: [json.dumps([1.0, 0.0]) for _ in texts],)
+```
+これはtextsの要素ひとつにつき、[1.0, 0.0]をJSON文字列にした値を1つ作ります。
+例えば、texts = ["memo-a", "memo-b"]なら結果は['[1.0, 0.0]', '[1.0, 0.0]']のようになります。
+次に本物の認証関数get_current_userが呼ばれたら、代わりにfake_get_current_userを使う設定を作りたいと思います。
+
+>　For each element in texts, this creates a JSON string representing [1.0, 0.0].For example, if texts = ["memo-a", "memo-b"], the result will be ['[1.0, 0.0]', '[1.0, 0.0]'].Next, I will configure the test to use fake_get_current_user instead of the actual authentication function, get_current_user, whenever it is called.
+```python
+monkeypatch.setitem(辞書, キー, 設定する値)
+```
+これで辞書にはFastAPIの「依存関係を別の関数に差し替える設定」を入れる辞書を入れ、キーには差し替え対象の認証関数、設定する値には代わりに使う関数を入れます。
+>　This dictionary stores the configuration for FastAPI's dependency override mechanism. The key is the authentication function to be replaced, and the value is the function that will be used as a replacement.
+
+```python
+active_user =  {"sub": "user-a"}
+def fake_get_current_user():
+    return active_user
+
+monkeypatch.setitem( main.app.dependency_overrides,main.get_current_user,fake_get_current_user,)
+```
+ここで、テスト用アプリを起動します。
+>　Here, we start the test application.
+```python
+with TestClient(main.app) as client:
+```
+これでアプリの起動時にはDB初期化処理が走るので、先ほど設定したMEMO_DB_PATHの場所にテーブルが作られます。さらにwithの中のclientから、client.post(...)やclient.get(...)でAPIを呼びます。ブロックを抜けるとテスト用アプリは終了します。
+
+>　When the application starts, the database initialization process runs and creates the tables in the location specified by the previously configured MEMO_DB_PATH environment variable. We can then use client.post(...) and client.get(...) inside the with block to send API requests. When the block ends,the test application is shut down.
+
+```python
+with TestClient(main.app) as client:
+    response = client.post("/memo", json={"text": "memo-a"})
+    assert response.status_code == 200
+
+    active_user["sub"] = "user-b"#ユーザーを"user-b"に切り替える
+    response = client.post("/memo", json={"text": "memo-b"})
+    assert response.status_code == 200
+```
+ここではactive_userをBに変更して、同じAPIにmemo-bを登録します。
+DBのパスは変えていないので、両方のメモは同じテスト用DBに入ります。レスポンスのステータスコードが200なら、登録APIが成功したことを確認できます。
+
+>　Here, we change active_user to User B and register memo-b through the same API.Since the database path remains unchanged, both memos are stored in the same test database. If the response status code is 200, we can confirm that the memo registration API succeeded.
+
+```python
+a_learing = response.json()["learning"]#JSONのlearningからメモの文章だけを取り出し、["memo-a"]と一致するか確認
+    assert [item["text"] for item in a_learing] == ["memo-a"]#["memo-a"]と一致するか確認
+```
+次に認証ユーザーをAに戻して/dashboardを呼びます。返ってきたJSONのlearningからメモの文章だけを取り出し、["memo-a"]と一致するか確認します。
+次にBとしてAのメモを削除しようとするために、あらかじめメモのIDを保存しておきます。
+
+>　Next, we switch the authenticated user back to User A and call /dashboard. We extract only the memo text from the learning field in the returned JSON and verify that it matches ["memo-a"].Next, to test whether User B can delete User A's memo, we save the memo's ID in advance.
+
+```python
+   active_user["sub"] = "user-b"
+    response = client.request("DELETE", "/delete", json={"id": a_memo_id})
+```
+次にAに戻り、Ａのダッシュボードにまだmemo-aだけが表示されることを確認できれば、Bによる削除ではAのメモが消えなかったと分かります。
+>　Next, we switch back to User A and verify that only memo-a still appears on User A's dashboard. If this is confirmed, we can conclude that User B's deletion attempt did not remove User A's memo.
+
+```python
+  active_user["sub"] = "user-a"
+    esponse = client.get("/dashboard")
+    assert [item["text"] for item in response.json()["learning"]] == ["memo-a"]
+```
+各段階では
+ assert response.status_code == 200
+を挿入し、テストを合格したかを判定します。
+これでテストを実行した結果は以下の通りです。
+
+>　At each stage, we insert assert response.status_code == 200 to determine whether the test has passed.The results of running the test are shown below.
+
+<img width="886" height="396" alt="image" src="https://github.com/user-attachments/assets/df8d2922-0075-4f8c-8f1c-9b19ed5695eb" />
+
+結果より、無事にテストを合格し、ユーザーAがメモを保存すると内容は保存され、Bに変わってメモを削除してもAからメモは削除されませんでした。
+このようにすることで、アプリを複数のユーザーが使用した場合でも、互いに干渉しないよううに保証することができます。
+
+>The results show that the test passed successfully. When User A saved a memo, its content was stored correctly. Even after switching to User B and attempting to delete the memo, the memo remained available to User A.This approach helps ensure that multiple users can use the application without interfering with each other's data.
+
 Gemini Liveは15分ほどでタイムアウトしてしまいます。
 また発音添削機能が文法に問題がなくても起動しないときがあります。
 

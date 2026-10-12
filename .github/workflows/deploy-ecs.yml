@@ -65,18 +65,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Checking ECS service..."
+          echo "=== Checking ECS service ==="
           echo "Region: $AWS_REGION"
           echo "Cluster: $ECS_CLUSTER"
           echo "Service: $ECS_SERVICE"
 
+          # Retrieve the complete ECS service response.
           aws ecs describe-services \
             --region "$AWS_REGION" \
             --cluster "$ECS_CLUSTER" \
             --services "$ECS_SERVICE" \
             --output json > services.json
 
-          echo "=== ECS service status ==="
+          echo "=== ECS service response ==="
           jq '{
             failures: .failures,
             services: [
@@ -88,23 +89,22 @@ jobs:
             ]
           }' services.json
 
-          if [ "$(jq '.services | length' services.json)" -eq 0 ]; then
-            echo "::error::ECS service was not returned by AWS."
-            echo "Check the AWS account, region, cluster, service name, and IAM permissions."
-            exit 1
-          fi
-
+          # Extract the task definition ARN from the actual response.
           TASK_DEFINITION_ARN="$(jq -r \
-            '.services[0].taskDefinition // empty' services.json)"
+            '.services[]? | select(.serviceName == "mingo") | .taskDefinition // empty' \
+            services.json)"
 
           if [ -z "$TASK_DEFINITION_ARN" ] || \
+             [ "$TASK_DEFINITION_ARN" = "null" ] || \
              [ "$TASK_DEFINITION_ARN" = "None" ]; then
-            echo "::error::The ECS service has no task definition ARN."
+            echo "::error::No task definition ARN was returned for ECS service mingo."
+            echo "Check the full ECS service response above."
             exit 1
           fi
 
-          echo "Task definition: $TASK_DEFINITION_ARN"
+          echo "Task definition ARN: $TASK_DEFINITION_ARN"
 
+          # Retrieve the task definition.
           aws ecs describe-task-definition \
             --region "$AWS_REGION" \
             --task-definition "$TASK_DEFINITION_ARN" \
@@ -117,12 +117,13 @@ jobs:
 
           if [ -z "$CURRENT_IMAGE" ] || \
              [ "$CURRENT_IMAGE" = "None" ]; then
-            echo "::error::Could not find a container image in the task definition."
+            echo "::error::No container image found in the task definition."
             exit 1
           fi
 
           echo "Current image: $CURRENT_IMAGE"
 
+          # Derive the ECR repository URI from the image.
           REPOSITORY_URI="${CURRENT_IMAGE%@*}"
           REPOSITORY_URI="${REPOSITORY_URI%:*}"
           REGISTRY="${REPOSITORY_URI%%/*}"
@@ -204,6 +205,7 @@ jobs:
           fi
 
           echo "New task definition: $NEW_TASK_DEFINITION_ARN"
+
           echo "Updating ECS service..."
 
           aws ecs update-service \

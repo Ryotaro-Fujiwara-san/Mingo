@@ -72,11 +72,11 @@ def init_memo_db():
 
 ##== １ユーザーの１日あたりの関数呼び出し上限 ==##
 LIMITS = {
-    "/memo":30,
-    "/hint":30,
+    "/memo":2000,
+    "/hint":2000,
     "/interaction":1000,
-    "/grammar_search":50,
-    "/pronounce":200,
+    "/grammar_search":2000,
+    "/pronounce":2000,
     "/realtime":200,
 }
 

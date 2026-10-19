@@ -185,7 +185,7 @@ client = genai.Client(api_key = API_KEY)#genaiライブラリの中にある設�
 ENABLE_CODE_ANALYSIS = os.environ.get("ENABLE_CODE_ANALYSIS","false").lower() == "true"#コード分析機能のONとOFF
 MODEL = "gemini-3.1-flash-live-preview"
 GRAMMER_MODEL = "gemini-4-argon"
-PRON_MODEL = "gemini-3.5-flash-lite"
+PRON_MODEL = "gpt-4o-mini-tts"
 
 
 
@@ -604,7 +604,7 @@ def grammar_serch(item:GrammarSearchIn,user:dict = Depends(limited_user)):
 @app.post("/pronounce")
 def pronounce(item:PronounceIn,user:dict = Depends(limited_user)):
     result = openai_client.audio.speech.create(
-        model = "tts-1",#speed対応のTTSモデル
+        model = PRON_MODEL,
         voice = "alloy",#声の種類
         input = item.text,#読み上げる文章
         speed = item.speed,#速度

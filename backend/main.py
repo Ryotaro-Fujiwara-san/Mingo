@@ -27,9 +27,24 @@ from fastapi.staticfiles import StaticFiles
 
 
 ##== DBへの接続を開く関数==##
+def get_db_path():
+    return os.environ.get("MEMO_DB_PATH", "memo.db")
+
+
+def validate_db_storage():
+    if os.environ.get("MEMO_DB_REQUIRE_PERSISTENT", "false").lower() != "true":
+        return
+
+    db_path = os.path.abspath(get_db_path())
+    db_directory = os.path.dirname(db_path)
+    if not os.path.ismount(db_directory):
+        raise RuntimeError(f"Required persistent database mount is unavailable: {db_directory}")
+    if not os.path.isfile(db_path) and os.path.exists(f"{db_path}.initialized"):
+        raise RuntimeError(f"Required database file is missing from persistent storage: {db_path}")
+
+
 def get_conn():
-    db_path = os.environ.get("MEMO_DB_PATH", "memo.db")  # 環境変数からDBパスを取得、なければデフォルトでmemo.db
-    return sqlite3.connect(db_path)
+    return sqlite3.connect(get_db_path())
 
 
 ##== メモ・ヒント機能用のテーブルを作る関数を定義 ==##
@@ -154,7 +169,11 @@ app = FastAPI()#サーバー本体
 
 @app.on_event("startup")#サーバーが立ち上がったときに実行する
 def startup():
+    validate_db_storage()
     init_memo_db()#DBのテーブルを作る
+    if os.environ.get("MEMO_DB_REQUIRE_PERSISTENT", "false").lower() == "true":
+        with open(f"{os.path.abspath(get_db_path())}.initialized", "a", encoding="utf-8"):
+            pass
     
 load_dotenv()#.envからAPIキーを読む
 API_KEY = os.environ.get("GEMINI_API_KEY")#.envからGeminiのキーを取り出す
@@ -165,7 +184,7 @@ openai_client = OpenAI(api_key = OPENAI_API_KEY)#openaiライブラリの中に�
 client = genai.Client(api_key = API_KEY)#genaiライブラリの中にある設計図Clientを使って、APIキー付きで“実物の道具箱”を1個作り、それをclientという変数に入れる
 ENABLE_CODE_ANALYSIS = os.environ.get("ENABLE_CODE_ANALYSIS","false").lower() == "true"#コード分析機能のONとOFF
 MODEL = "gemini-3.1-flash-live-preview"
-GRAMMER_MODEL = "gemini-3.5-flash-lite"
+GRAMMER_MODEL = "gemini-4-argon"
 PRON_MODEL = "gemini-3.5-flash-lite"
 
 

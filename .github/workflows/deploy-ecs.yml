@@ -77,11 +77,118 @@ jobs:
 
           echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
-      - name: Deploy to ECS Express
-        uses: aws-actions/amazon-ecs-deploy-express-service@v1
-        with:
-          service-name: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          image: ${{ env.IMAGE_URI }}
-          execution-role-arn: arn:aws:iam::656051538064:role/ecsTaskExecutionRole
-          infrastructure-role-arn: arn:aws:iam::656051538064:role/ecsInfrastructureRoleForExpressServices
+      - name: Register task definition with persistent EFS volume
+        env:
+          EFS_FILE_SYSTEM_ID: ${{ vars.EFS_FILE_SYSTEM_ID }}
+          EFS_ACCESS_POINT_ID: ${{ vars.EFS_ACCESS_POINT_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$EFS_FILE_SYSTEM_ID" || -z "$EFS_ACCESS_POINT_ID" ]]; then
+            echo "::error::Set the EFS_FILE_SYSTEM_ID and EFS_ACCESS_POINT_ID repository variables before enabling deployment."
+            exit 1
+          fi
+
+          SERVICE_ARN="$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].serviceArn' \
+            --output text)"
+          CURRENT_TASK_DEFINITION="$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' \
+            --output text)"
+
+          if [[ -z "$SERVICE_ARN" || "$SERVICE_ARN" == "None" || \
+                -z "$CURRENT_TASK_DEFINITION" || "$CURRENT_TASK_DEFINITION" == "None" ]]; then
+            echo "::error::Could not find the configured ECS service and its task definition."
+            exit 1
+          fi
+
+          python - "$CURRENT_TASK_DEFINITION" "$IMAGE_URI" "$RUNNER_TEMP/task-definition.json" <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          current_task_definition, image_uri, output_path = sys.argv[1:]
+          task_definition = json.loads(subprocess.check_output([
+              "aws", "ecs", "describe-task-definition",
+              "--task-definition", current_task_definition,
+              "--query", "taskDefinition",
+              "--output", "json",
+          ]))
+
+          for field in (
+              "taskDefinitionArn", "revision", "status", "requiresAttributes",
+              "compatibilities", "registeredAt", "registeredBy",
+          ):
+              task_definition.pop(field, None)
+
+          containers = [
+              container for container in task_definition["containerDefinitions"]
+              if container["name"] == "Main"
+          ]
+          if len(containers) != 1:
+              raise SystemExit("Expected exactly one ECS Express primary container named Main.")
+
+          container = containers[0]
+          container["image"] = image_uri
+          environment = {
+              item["name"]: item for item in container.get("environment", [])
+          }
+          environment["MEMO_DB_PATH"] = {
+              "name": "MEMO_DB_PATH",
+              "value": "/mnt/mingo-data/memo.db",
+          }
+          environment["MEMO_DB_REQUIRE_PERSISTENT"] = {
+              "name": "MEMO_DB_REQUIRE_PERSISTENT",
+              "value": "true",
+          }
+          container["environment"] = list(environment.values())
+
+          mount_points = [
+              mount for mount in container.get("mountPoints", [])
+              if mount["containerPath"] != "/mnt/mingo-data"
+          ]
+          mount_points.append({
+              "sourceVolume": "mingo-data",
+              "containerPath": "/mnt/mingo-data",
+              "readOnly": False,
+          })
+          container["mountPoints"] = mount_points
+
+          task_definition["volumes"] = [
+              volume for volume in task_definition.get("volumes", [])
+              if volume["name"] != "mingo-data"
+          ] + [{
+              "name": "mingo-data",
+              "efsVolumeConfiguration": {
+                  "fileSystemId": os.environ["EFS_FILE_SYSTEM_ID"],
+                  "rootDirectory": "/",
+                  "transitEncryption": "ENABLED",
+                  "authorizationConfig": {
+                      "accessPointId": os.environ["EFS_ACCESS_POINT_ID"],
+                      "iam": "DISABLED",
+                  },
+              },
+          }]
+
+          with open(output_path, "w", encoding="utf-8") as task_file:
+              json.dump(task_definition, task_file)
+          PY
+
+          TASK_DEFINITION_ARN="$(aws ecs register-task-definition \
+            --cli-input-json "file://$RUNNER_TEMP/task-definition.json" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+
+          aws ecs update-express-gateway-service \
+            --service-arn "$SERVICE_ARN" \
+            --task-definition-arn "$TASK_DEFINITION_ARN" \
+            --scaling-target '{"minTaskCount":1,"maxTaskCount":1}'
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"

@@ -237,7 +237,7 @@ async def analyze_turn(user_text,utterance_audio,websocket,config:SessionConfig,
 ##== 文法アドバイス ==##
 async def check_grammar(text,websocket,config:SessionConfig,turn_id):
     prompt = (
-        "次の文章が文法的に正しいか判定して、必ずJSON（辞書）だけで返す。重複は無視して:\n"
+        "次の文章が文法的に正しいか判定して、必ずJSON（辞書）だけで返す。重複は無視して、明らかに文法がおかしければfalse:\n"
         '{"correct":true/false,"corrected":"修正分","explanation":"理由の解説"}\n'
         f"explanationは{config.explainLang}で書くこと\n"
         f"文:{text}"
@@ -574,7 +574,7 @@ def analyze_grammar(text,target_lang,explain_lang,context=""):
         "手順2:(翻訳後の)全文の意味を母国語でall_meaningに入れる。\n"
         "手順3:ピリオドなどで文単位(sentences)に分け、各文の意味を母国語でsub_meaningに入れる。\n"
         "手順4:各文を『読む順のまま・一番外側の層だけ』でsegmentsに区切る。関係詞節・従属節・to不定詞句などの『さらに分解できるまとまり』はそれ以上分解せずrole=\"clause\"の1要素にまとめる(中は展開しない)。【最重要】解析対象そのものの全体を1つのsegment(特にrole=clause)にしてはいけない。解析対象は必ず内部を2つ以上のsegmentに分解する。role=\"clause\"にできるのは『解析対象の“内部”にある、より小さい節・句』だけで、解析対象と同じ範囲をclauseにしてはいけない。\n"
-        "手順5:各segmentにrole(S/V/O/C/idiom/clause/other)、meaning(意味の解説)、caseInflection(格変化・活用の解説。無ければ空)を付ける。role=clauseの時だけclauseType(節の種類)も付ける。制限用法だけでなく非制限用法(例:「, which is really handsome」「, who ...」のようにカンマで始まる節)も、カンマごとrole=\"clause\"にする。分詞句は現在分詞(例:「playing football」)・過去分詞(例:「written in English」)のように名詞を修飾する句も含める。慣用句・イディオム・句動詞(例:「by the way」「look forward to」「give up」「as soon as possible」)は、バラバラの語に分けず、まとめて1つのrole=\"idiom\"にする。\n"
+        "手順5:各segmentにrole(S/V/O/C/idiom/clause/other)（この時、idiomならたとえS＋V形に分類されてもidiomとする、meaning(意味の解説)、caseInflection(格変化・活用の解説。無ければ空)を付ける。role=clauseの時だけclauseType(節の種類)も付ける。制限用法だけでなく非制限用法(例:「, which is really handsome」「, who ...」のようにカンマで始まる節)も、カンマごとrole=\"clause\"にする。分詞句は現在分詞(例:「playing football」)・過去分詞(例:「written in English」)のように名詞を修飾する句も含める。慣用句・イディオム・句動詞(例:「by the way」「look forward to」「give up」「as soon as possible」)は、バラバラの語に分けず、まとめて1つのrole=\"idiom\"にする。\n"
         "textは入力の語をそのまま写す。meaning・caseInflection・all_meaning・sub_meaningは必ず母国語で書く。\n"
         "必ず次のJSON形式だけで返す:\n"
         '{"wasTranslated":true/false,"translated":"学習言語での全文","all_meaning":"全文の母国語での意味",'

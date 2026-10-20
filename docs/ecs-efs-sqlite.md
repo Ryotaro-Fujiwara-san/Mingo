@@ -28,4 +28,4 @@ SQLiteをEFS上で使う間は `max-task-count: 1` とし、水平スケール�
 
 ## デプロイ権限
 
-GitHub Actionsが利用するIAMロールには、既存サービス/タスク定義の読み取り (`ecs:DescribeServices`、`ecs:DescribeTaskDefinition`)、新しいタスク定義の登録 (`ecs:RegisterTaskDefinition`)、Expressサービスの更新 (`ecs:UpdateExpressGatewayService`) が必要です。タスク定義が参照する実行ロール/タスクロールに対する `iam:PassRole` も必要です。
+GitHub Actionsが利用するIAMロールには、Expressサービス/タスク定義の読み取り (`ecs:DescribeExpressGatewayService`、`ecs:DescribeTaskDefinition`)、新しいタスク定義の登録 (`ecs:RegisterTaskDefinition`)、Expressサービスの更新 (`ecs:UpdateExpressGatewayService`) が必要です。タスク定義が参照する実行ロール/タスクロールに対する `iam:PassRole` も必要です。

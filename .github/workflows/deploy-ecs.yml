@@ -89,20 +89,14 @@ jobs:
             exit 1
           fi
 
-          SERVICE_ARN="$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query 'services[0].serviceArn' \
-            --output text)"
-          CURRENT_TASK_DEFINITION="$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query 'services[0].taskDefinition' \
+          SERVICE_ARN="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${ECS_CLUSTER}/${ECS_SERVICE}"
+          CURRENT_TASK_DEFINITION="$(aws ecs describe-express-gateway-service \
+            --service-arn "$SERVICE_ARN" \
+            --query 'service.activeConfigurations[0].taskDefinitionArn' \
             --output text)"
 
-          if [[ -z "$SERVICE_ARN" || "$SERVICE_ARN" == "None" || \
-                -z "$CURRENT_TASK_DEFINITION" || "$CURRENT_TASK_DEFINITION" == "None" ]]; then
-            echo "::error::Could not find the configured ECS service and its task definition."
+          if [[ -z "$CURRENT_TASK_DEFINITION" || "$CURRENT_TASK_DEFINITION" == "None" ]]; then
+            echo "::error::Could not find an active task definition for ECS Express service $SERVICE_ARN."
             exit 1
           fi
 
@@ -189,6 +183,32 @@ jobs:
             --task-definition-arn "$TASK_DEFINITION_ARN" \
             --scaling-target '{"minTaskCount":1,"maxTaskCount":1}'
 
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE"
+          for attempt in {1..60}; do
+            ACTIVE_TASK_DEFINITION="$(aws ecs describe-express-gateway-service \
+              --service-arn "$SERVICE_ARN" \
+              --query "service.activeConfigurations[?taskDefinitionArn=='${TASK_DEFINITION_ARN}'] | length(@)" \
+              --output text)"
+            SERVICE_STATUS="$(aws ecs describe-express-gateway-service \
+              --service-arn "$SERVICE_ARN" \
+              --query 'service.status.statusCode' \
+              --output text)"
+
+            if [[ "$ACTIVE_TASK_DEFINITION" == "1" && "$SERVICE_STATUS" == "ACTIVE" ]]; then
+              echo "ECS Express service is active with task definition $TASK_DEFINITION_ARN."
+              exit 0
+            fi
+
+            if [[ "$SERVICE_STATUS" == "FAILED" ]]; then
+              STATUS_REASON="$(aws ecs describe-express-gateway-service \
+                --service-arn "$SERVICE_ARN" \
+                --query 'service.status.statusReason' \
+                --output text)"
+              echo "::error::ECS Express deployment failed: $STATUS_REASON"
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for ECS Express service to activate task definition $TASK_DEFINITION_ARN."
+          exit 1

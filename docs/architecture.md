@@ -1,5 +1,7 @@
 # Mingo システムアーキテクチャ
 
+[English version](architecture.en.md)
+
 ## 全体構成
 
 ```mermaid

@@ -1,6 +1,6 @@
 # Mingo
 
-![Mingoのデモ](docs/images/mingo-demo.gif)
+[![Mingoのデモ](docs/images/mingo-demo.gif)](https://go.screenpal.com/watch/cO6T16ny4ld)
 
 ## 概要 / Overview
 

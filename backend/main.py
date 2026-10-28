@@ -238,7 +238,7 @@ async def analyze_turn(user_text,utterance_audio,websocket,config:SessionConfig,
 async def check_grammar(text,websocket,config:SessionConfig,turn_id):
     prompt = (
         "次の文章が文法的に正しいか判定して、必ずJSON（辞書）だけで返す。重複は無視して、明らかに文法がおかしければfalse:\n"
-        '{"correct":true/false,"corrected":"修正分","explanation":"理由の解説"}\n'
+        '{"correct":true/false,"corrected":"修正分","explanation":"理由の解説と意味をくみ取りネイティブならこう言うような自然な表現も返答"}\n'
         f"explanationは{config.explainLang}で書くこと\n"
         f"文:{text}"
     )

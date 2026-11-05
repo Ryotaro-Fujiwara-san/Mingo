@@ -6597,7 +6597,7 @@ a_learing = response.json()["learning"]#JSONのlearningからメモの文章だ�
 
 >The results show that the test passed successfully. When User A saved a memo, its content was stored correctly. Even after switching to User B and attempting to delete the memo, the memo remained available to User A.This approach helps ensure that multiple users can use the application without interfering with each other's data.
 
-PDFファイルを初期設定時にアップロードできるようにし、必要に応じて会話中に初期設定が再参照されるようにします。
+PDFファイルを初期設定時にアップロードできるようにし、必要に応じて会話中に初期設定が再参照されるようにします。また第二設定としてユーザーのpythonファイルもアップロードでき、同じように会話中に適切なタイミングで参照されるようにします。
 
 Gemini Liveは15分ほどでタイムアウトしてしまいます。
 

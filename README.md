@@ -6597,9 +6597,11 @@ a_learing = response.json()["learning"]#JSONのlearningからメモの文章だ�
 
 >The results show that the test passed successfully. When User A saved a memo, its content was stored correctly. Even after switching to User B and attempting to delete the memo, the memo remained available to User A.This approach helps ensure that multiple users can use the application without interfering with each other's data.
 
-PDFファイルを初期設定時にアップロードできるようにし、必要に応じて会話中に初期設定が再参照されるようにします。また第二設定としてユーザーのpythonファイルもアップロードでき、同じように会話中に適切なタイミングで参照されるようにします。またコードも出力されるようにし、コード部分だけ別枠で表示されるようにします。
+### 2026/11/07
+PDFファイルを初期設定時にアップロードできるようにし、必要に応じて会話中に初期設定が再参照されるようにします。また第二設定としてユーザーのVScodeに同期できるようにし、同じように会話中に適切なタイミングで参照されるようにします。またコードも出力されるようにし、コード部分だけ別枠で表示されるようにします。この時使用するのは、以前コード解析に利用していたClaudeを使用したいと思います。
+さらにGemini Liveは15分ほどでタイムアウトしてうので、毎回再接続が自動でされるようにして、以前の会話を参照して次の会話を初期設定に基づいて出力されるようにします。
+また随時初期設定を参照して、会話内容に反映させるようにします。例えば初期設定が「あなたはAIエンジニアのインターンシップの面接官です。AIエンジニアのインターンシップで問われる質問を随時質問してください。そして最終的には僕の合否と理由を述べてください」と入力すれば、例えば話が逸れても、途中で初期設定のうち面接の段階がどの段階まで来たかを確認し、次の質問にいけるようにします。
 
-Gemini Liveは15分ほどでタイムアウトしてしまいます。
 
 
 

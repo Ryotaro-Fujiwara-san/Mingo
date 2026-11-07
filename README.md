@@ -6858,19 +6858,116 @@ const [pdfFile, setPdfFile] = useState<File | null>(null);
 ```
 pdfFileは選んだ PDF を入れておく場所で、setPdfFileは選んだ PDF を pdfFile に入れるための関数で、最初はFile | nullでまだ何も選んでいない状態です。
 
+```typescript
+<label>
+  初期設定用PDF:
+  <input
+    type="file"
+    accept=".pdf,application/pdf"
+    onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}//選ばれたファイルのうち、一つ目を取り出します。
+  />
+</label>
+```
+これはPDFを選ぶと、ブラウザーのpdfFileに覚えさせる段階です。
+次に、選んだPDFをサーバーに送る関数を作成します。
 
-### 2026/
-Gemini Liveは15分ほどでタイムアウトしてしまうので、毎回再接続が自動でされるか、タイムアウトしないようにします。
+```typescript
+const formData = new FormData();
+```
+ここで FormData()は文字やファイルをサーバーに送るための、ブラウザーに用意された機能です。
+さらに選んだ PDF を、"file" という名前で formData に追加します。
+```typescript
+ formData.append("file",pdfFile);
+```
+そして送信処理を追加します。
+
+```typescript
+  const res = await api("/setup_pdf",{
+    method: "POST",
+    body: formData,
+  });
+```
+さらに保存から24時間を過ぎたPDFを削除する関数を作成します。
+```python
+def delete_expired_setup_pdfs():
+    conn = get_conn()
+
+    try:
+        conn.execute(
+            """
+            DELETE FROM setup_pdf
+            WHERE created_at <= datetime('now', '-24 hours')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+```
+またこの関数をサーバーが立ち上がり次第起動するエンドポイントであるstartupに置きます。
+
+### 2026/11/07(再接続処理）
+Gemini Liveは15分ほどでタイムアウトしてしまうので、毎回再接続が自動でされるか、タイムアウトしないようにします。Gemini Live には、主に２つの仕組みがあります。
+まず長くなった会話履歴を整理し、15分を超えて続けられるようにする会話の圧縮と接続が切れる際、直前の会話を引き継いで再接続するセッションの再開の両方を行います。
+まずリアルタイム会話機能のエンドポイントにあるAIへの指示内容に以下を追加します。
+```python
+gemini_config = {
+        "response_modalities":["AUDIO"],#返事を音声にする
+        "context_window_compression":types.ContextWindowCompressionConfig(
+            sliding_window = types.SlidingWindow(),
+        ),
+        "system_instruction":instructions,#指示文を入れる
+        "input_audio_transcription":{"language_codes":[config.targetLang]},#自分の発言を文字起こしする
+        "output_audio_transcription":{},#AIの発言を文字起こしする
+    }
+```
+types.ContextWindowCompressionConfig(...)はGoogle のライブラリに用意された「圧縮の設定を作るツール」です。
+またsliding_window = types.SlidingWindow()で必要になったときに古い履歴の一部を参照範囲から外すスライディングウィンドウ方式で指定します。
+またGemini に「再開機能を使いたい」と伝えます。
+```python
+    gemini_config = {
+        "response_modalities":["AUDIO"],#返事を音声にする
+        "context_window_compression":types.ContextWindowCompressionConfig(
+            sliding_window = types.SlidingWindow(),
+        ),
+        "system_instruction":instructions,#指示文を入れる
+        "input_audio_transcription":{"language_codes":[config.targetLang]},#自分の発言を文字起こしする
+         "session_resumption": types.SessionResumptionConfig(),
+        "output_audio_transcription":{},#AIの発言を文字起こしする
+    }
+```
+次にGeminiが送ってくる「途中からの会話を始めるための情報」を入れる変数を用意します。   
+```python
+    resumption_handle = None
+```
+次にハンドルを受け取る処理を実装します。
+```python
+if response.session_resumption:
+                            update = response.session_resumption.update
+```
+さらに、会話を再開できるか（update.resumable）とGemini が送ってきた、新しいハンドル（update.new_handle）があればハンドルを保存できるようにします。
+```python
+ if update.resumable and update.new_handle:
+                                resumption_handle = update.new_handle
+```
+次にGemini から接続終了の予告が届いたか確認します。
+```python
+if response.go_away:
+    print("Geminiから接続終了の予告:", response.go_away.time_left)
+```
+次に再接続するときに渡す設定を準備する行を作成します。
+```python
+    gemini_config["session_resumption"] = types.SessionResumptionConfig(
+        handle=resumption_handle,
+    )
+```
+これで gemini_configの設定の中のsession_resumptionの項目に現在のハンドルを挿入します。
 
 ### 2026/
 常に初期設定を参照して、会話内容に反映させるようにします。例えば初期設定が「あなたはAIエンジニアのインターンシップの面接官です。AIエンジニアのインターンシップで問われる質問を随時質問してください。そして最終的には僕の合否と理由を述べてください」と入力すれば、例えば話が逸れても、途中で初期設定のうち面接の段階がどの段階まで来たかを確認し、次の質問にいけるようにします。
-
-
-### 2026/
-ユーザーのVScodeにアプリが同期できるようにし、同じように会話中に適切なタイミングで参照されるようにします。ユーザーはアプリからできるだけ簡単にVScodeに同期できるようにします。
+まず
 
 ### 2026/
-コードも出力されるようにし、コード部分だけ別枠で表示されるようにします。この時使用するのは、以前コード解析に利用していたClaudeを使用したいと思います。
+ユーザーのVScodeにアプリが同期できるようにし、同じように会話中に適切なタイミングで参照されるようにします。ユーザーはアプリからできるだけ簡単にVScodeに同期できるようにします。さらにコードも出力されるようにし、コード部分だけ別枠で表示されるようにします。この時使用するのは、以前コード解析に利用していたClaudeを使用したいと思います。
 
 
 

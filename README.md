@@ -6852,6 +6852,12 @@ pdf_bytes = setup_pdf[0]はつまりsetup_pdf の１番目に入っている PDF
                                 continue
 ```
 fc.argsでfc には、Gemini が呼び出したツールの情報が入っています。その中の args は、ツールに渡された引数です。
+次にフロントエンドでPDFをアップロードする機構を作成します。まず以下の行を追加します。
+```typescript
+const [pdfFile, setPdfFile] = useState<File | null>(null);
+```
+pdfFileは選んだ PDF を入れておく場所で、setPdfFileは選んだ PDF を pdfFile に入れるための関数で、最初はFile | nullでまだ何も選んでいない状態です。
+
 
 ### 2026/
 Gemini Liveは15分ほどでタイムアウトしてしまうので、毎回再接続が自動でされるか、タイムアウトしないようにします。

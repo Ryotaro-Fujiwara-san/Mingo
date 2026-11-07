@@ -6597,10 +6597,162 @@ a_learing = response.json()["learning"]#JSONのlearningからメモの文章だ�
 
 >The results show that the test passed successfully. When User A saved a memo, its content was stored correctly. Even after switching to User B and attempting to delete the memo, the memo remained available to User A.This approach helps ensure that multiple users can use the application without interfering with each other's data.
 
-### 2026/11/07
-PDFファイルを初期設定時にアップロードできるようにし、必要に応じて会話中に初期設定が再参照されるようにします。また第二設定としてユーザーのVScodeに同期できるようにし、同じように会話中に適切なタイミングで参照されるようにします。またコードも出力されるようにし、コード部分だけ別枠で表示されるようにします。この時使用するのは、以前コード解析に利用していたClaudeを使用したいと思います。
-さらにGemini Liveは15分ほどでタイムアウトしてうので、毎回再接続が自動でされるようにして、以前の会話を参照して次の会話を初期設定に基づいて出力されるようにします。
-また随時初期設定を参照して、会話内容に反映させるようにします。例えば初期設定が「あなたはAIエンジニアのインターンシップの面接官です。AIエンジニアのインターンシップで問われる質問を随時質問してください。そして最終的には僕の合否と理由を述べてください」と入力すれば、例えば話が逸れても、途中で初期設定のうち面接の段階がどの段階まで来たかを確認し、次の質問にいけるようにします。
+### 2026/11/07（PDFアップロード機能）
+履歴書などのPDFファイルを初期設定時にアップロードできるようにし、必要に応じて会話中に初期設定が再参照されるようにします。
+
+流れとしては、画面でPDFを選ぶ→MingoがPDFを受け取り、PDFをAWSのEFSに保存します。この際にログインしていない人のアップロードは拒否するようにして、それと同時に保存時刻を記録し、新しい PDF を選んだ場合は古い PDF と要約を削除して入れ替えます。
+
+そして保存したPDFを Claude Files API に渡し、会話に必要な役割・状況・条件などを要約してもらいます。そして要約をGemini Live の初期指示に加えます。もし会話中に必要ならClaudeがPDFを再参照し、24時間経過時または新しいPDFがアップロードされたらPDFをEFSから削除します。
+
+
+まず必要なライブラリを追加します。最初にrequirements.txtにClaude API に PDF を送るためのライブラリであるanthropic、画面から送られたファイルを FastAPI で受け取るためのライブラリであるpython-multipartを追加します。
+
+その後、ターミナルで必要なライブラリをインストールします。
+pip install -r backend\requirements.txt
+
+次にAsyncAnthropicというClaude API に PDF を送ったり、要約を受け取ったりするためのライブラリを入れます。
+```python
+from anthropic import AsyncAnthropic
+```
+次にPDFと質問を受け取り、ClaudeにPDFをアップロードしClaudeに質問をします。
+最終的にはClaude側の一時ファイルを削除して回答を返します。
+
+```python
+async def ask_claude_about_pdf(pdf_bytes: bytes, question: str):
+```
+ここで入力はPDFの中身（pdf_bytes: bytes　＊bytesはファイルの中身を扱うためのデータの種類）と質問（question: str)になります。またこれは非同期処理にします。次にサーバーの環境変数からANTHROPIC_API_KEY を取り出し、api_key に入れます。
+
+```python
+ api_key = os.environ.get("ANTHROPIC_API_KEY")
+```
+さらにこの関数の中に以下の関数を用意します。
+
+```python
+async with AsyncAnthropic(api_key=api_key) as claude:
+```
+これは取得したAPIキーを使って、Claude APIと通信するためのツールを作り、claudeという名前で使用します。async withで範囲の処理が終わると、通信に使ったものが片付けされます。
+さらにPDFをアップロードすると、Claude の Files API は「ファイルを受け取りました」という受付情報を返します。その情報を uploadedに入れます。
+
+```python
+ uploaded = await claude.files.upload(file=("setup.pdf",pdf_bytes,"application/pdf"))
+```
+ここでawaitでアップロードが終わるのを待ち、"setup.pdf"がClaude 側に渡すファイル名になり、pdf_bytesでPDFの中身になり、"application/pdf"でPDF ファイルであることを表す種類を指定します。
+そしてClaude に PDF をアップロードすると、Claude 側でそのファイルを見分けるための番号（ファイル ID）が発行されます。これをfile_id に保存し、次に Claude に質問を送るとき、この ID を使って「この PDF を読んで」と伝えられるようにします。
+```python
+file_id = uploaded.id
+```
+次にClaude に質問した後、Claude 側に一時的に置いた PDF を削除する準備をします。
+```python
+        try:
+            pass
+        finally:
+            await claude.files.delete(file_id)
+```
+このpassにPDF と質問を Claude に送る処理を書きます。
+
+```python
+response = await claude.messages.create(
+                model = "claude-sonnet-4-6",
+                max_token = 1024,
+                messages = [
+                    {
+                        "role": "user", # Claude に質問・依頼を送る側
+                        "content":[
+                            {
+                                "type":"document",
+                                "source":{
+                                    "type":"file",
+                                    "file_id":file_id,
+                                },
+                            },
+                            {
+                                "type":"text",
+                                "text":question
+                            },
+                          ],
+                    }
+                ],
+            )
+```
+次に回答文を取り出す処理を追加します。
+
+```python
+        answer = "\n".join(
+            block.text for block in response.content
+            if block.type == "text"
+        )
+```
+response.contentはClaude から返ってきた内容の集まりで、for block in response.contentで身を１つずつ block に入れます。
+またblock.textでその block に入っている文章を取り出します。そして選ばれた block.text を "\n".join(...) で改行してつなぎます。
+次に/setup/pdfと呼ばれるエンドポイントを追加します。
+
+```python
+@app.post("/setup_pdf")
+async def receive_setup_pdf(
+    file:UploadFile = File(...
+    user:dict = Depends(get_current_user)),
+):
+    return{"message":"PDFを受け取りました"}
+```
+file: UploadFile = File(...)は送られたファイルを file に入れます。
+ここでFile(...)でFastAPI に、リクエストに含まれるファイルをここで受け取ってくださいと伝えます。 user:dict = Depends(get_current_user))では確認に成功すると、ユーザーの情報が user に入ります。ログインが確認できなければ、ファイルを受け付けません。
+次に画面から送られたファイルの中身を読み、pdf_bytes に入れます。
+```python
+pdf_bytes = await file.read()
+```
+次に受け取ったファイルの先頭にPDFの目印があるかを確認します。
+
+```python
+    if not pdf_bytes.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=400,
+            detail="PDFファイルではありません"
+        )
+```
+これでstartswith(...)で指定した文字で始まるかを確認します。
+
+さらに先ほど作成したask_claude_about_pdf(pdf_bytes: bytes, question: str)関数を使用します。
+
+```python
+    summary = await ask_claude_about_pdf(
+        pdf_bytes, 
+        (
+            "このPDFを会話の初期設定に使います。"
+            "役割、状況、重要な条件、用語を簡潔にまとめてください。"
+            "PDFに書かれていないことは推測しないでください。"
+        ),
+    )
+    return {"summary": summary}
+```
+さらに以下の行を追加します。
+```python
+ user_id = user["sub"]
+```
+このuser["sub"]でログイン確認で取得したユーザー情報 user から、その人を識別する ID を取り出します。次にMingoのデータベースはAWSのEFS上に置く構成なので、今回はPDFの中身もそのデータベースに保存する方式で進めます。今回はユーザーIDとPDFの中身、要約、アップロード日時を保存します。
+
+```python
+    conn.execute("""CREATE TABLE IF NOT EXISTS setup_pdf(
+        user_id TEXT PRIMARY KEY,
+        pdf_data BLOB NOT NULL,
+        summary TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+       )""")
+ ```
+      
+
+### 2026/
+Gemini Liveは15分ほどでタイムアウトしてしまうので、毎回再接続が自動でされるか、タイムアウトしないようにします。
+
+### 2026/
+常に初期設定を参照して、会話内容に反映させるようにします。例えば初期設定が「あなたはAIエンジニアのインターンシップの面接官です。AIエンジニアのインターンシップで問われる質問を随時質問してください。そして最終的には僕の合否と理由を述べてください」と入力すれば、例えば話が逸れても、途中で初期設定のうち面接の段階がどの段階まで来たかを確認し、次の質問にいけるようにします。
+
+
+### 2026/
+ユーザーのVScodeにアプリが同期できるようにし、同じように会話中に適切なタイミングで参照されるようにします。ユーザーはアプリからできるだけ簡単にVScodeに同期できるようにします。
+
+### 2026/
+コードも出力されるようにし、コード部分だけ別枠で表示されるようにします。この時使用するのは、以前コード解析に利用していたClaudeを使用したいと思います。
+
 
 
 

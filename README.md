@@ -6738,7 +6738,120 @@ pdf_bytes = await file.read()
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
        )""")
  ```
-      
+ 次にClaudeが要約を作った後に、PDFと要約をデータベースに保存します。まず作成したエンドポイントに以下の処理を追加します。    
+```python
+     conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO setup_pdf(user_id,pdf_data,summary)
+            VALUES(?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                pdf_data = excluded.pdf_data,
+                summary = excluded.summary,
+                created_at = datetime('now')
+            """,
+            (user_id, pdf_bytes, summary),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+ ```
+ ON CONFLICT(user_id) DO UPDATE SETで同じユーザーの PDF がすでにある場合は、新しい内容に入れ替えます。
+次に保存した PDF と要約を、本人のものだけ取り出す関数を作ります。
+この関数はユーザーIDを受け取り、その人のＰＤＦと要約を探すようにします。
+
+```python
+def get_setup_pdf(user_id:str):
+    conn = get_conn()
+    try:
+       row = conn.execute(
+        """
+        SELECT pdf_data, summary
+            FROM setup_pdf
+            WHERE user_id = ?
+              AND created_at > datetime('now', '-24 hours')
+        """,
+            (user_id,),
+        ).fetchone()
+      finally:
+        conn.close()
+      return row
+  ```
+(user_id,)はSQLの？に渡す値で、.fetchone()で条件に合う行を一件取り出します。
+次にリアルタイム会話機能のエンドポイント/realtimeに、ログイン中のユーザーのPDFと要約を取り出す処理を追加します。
+```python
+    setup_pdf = get_setup_pdf(user["sub"])
+```
+この後、以下の取り出したPDFの要約をGeminiの初期設定に加えます。
+```python
+ if setup_pdf:
+        summary = setup_pdf[1]
+        instructions += f"\n初期設定用PDFの要約: {summary}"
+```
+そして会話中にGeminiがPDFを確認できるようにPDF確認ツールの説明を作ります。
+```python
+PDF_TOOL = types.Tool(
+    function_declarations=[#ライブラリがリストにしろと決めているため、リストの形式にする
+        types.FunctionDeclaration(
+            name = "consult_setup_pdf",#実行したい関数
+            description ="初期設定用PDFについて詳しく確認するツール、またユーザーがPDFの内容を確認するよう求めた場合や要約だけでは分からない場合に呼び出す",
+            parameters = types.Schema(#関数データがどんな形かを表す設計図を書く
+                type = types.Type.OBJECT,#これは固定された書き方であり、OBJECT形式(辞書）で渡すようにする
+                properties = {
+                    "request":types.Schema(#さらにその関数の引数のデータがどんな形かを表す設計図を書く
+                        type = types.Type.STRING,#STRING形式（文字）で渡すようにする
+                        description = "PDFについて確認したい質問"
+                    ),
+                },
+            ),#実行したい関数の引数の様式を決定する
+        )
+    ]
+)
+```
+また今回は従来実装していたコードエージェント機能を削除します。
+そして会話中に本人のPDFを取り出し、Claudeに質問する関数を作ります。
+```python
+async def consult_setup_pdf(user_id:str,question:str):
+    setup_pdf = get_setup_pdf(user_id)
+    if not setup_pdf:
+        return"PDFが見つかりません"
+    pdf_bytes = setup_pdf[0]
+    answer = await ask_claude_about_pdf(
+        pdf_bytes,
+        question,
+    )
+    return answer
+ ```
+pdf_bytes = setup_pdf[0]はつまりsetup_pdf の１番目に入っている PDF の中身です。
+さらにGemini が PDF 確認ツールを呼んだときに、Claude に質問し、その回答を Gemini に返す処理へ変更します。
+```python
+ async for response in session.receive():
+                        if response.tool_call:#PDF解析関数の実行要求が来たか検知する
+                            responses = []#Geminiに結果を送信する
+
+                            for fc in response.tool_call.function_calls:#実行要求を一つ一つ実行
+                                if fc.name != "consult_setup_pdf":
+                                    result = "不明なツールです。"
+                                else:
+                                    question = (fc.args or {}).get("request")
+
+                                    if not isinstance(question, str) or not question.strip():
+                                        result = "PDFについての質問が指定されていません。"
+                                    else:
+                                        result = await consult_setup_pdf(
+                                            user["sub"],
+                                            question,
+                                        )
+                                responses.append(types.FunctionResponse(
+                                    id=fc.id,#どの実行要求に対する返事か
+                                    name = fc.name,
+                                    response={"result": result["summary"]},
+                                ))
+                                await session.send_tool_response(function_responses=responses)#Geminiに要約を返す
+                                continue
+```
+fc.argsでfc には、Gemini が呼び出したツールの情報が入っています。その中の args は、ツールに渡された引数です。
 
 ### 2026/
 Gemini Liveは15分ほどでタイムアウトしてしまうので、毎回再接続が自動でされるか、タイムアウトしないようにします。

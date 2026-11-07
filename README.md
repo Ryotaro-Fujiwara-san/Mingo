@@ -6961,6 +6961,58 @@ if response.go_away:
     )
 ```
 これで gemini_configの設定の中のsession_resumptionの項目に現在のハンドルを挿入します。
+さらにブラウザーとの接続が切れたかを覚えるフラグを用意します。
+```python
+frontend_disconnected = False
+```
+これがfrontend_to_gemini()で except WebSocketDisconnectになったら、これがTrueになるようにします。
+次にブラウザーから届く音声を、Gemini の接続とは別に受け取れるようにします。これは再接続してもブラウザーとの会話を続けるための準備です。
+まずブラウザーから届いた音声を一時的に預ける箱を作ります。
+```python
+ audio_queue:asyncio.Queue[bytes] = asyncio.Queue()
+```
+[bytes]は箱に入れるものは音声データ（バイト列）だという型の説明になります。
+後の処理で音声を受け取る処理が put() で箱に入れ、Gemini に送る処理が get() で先に入った音声から取り出します。また既存の audio_buffer = bytearray()#音声用のリストは接続のたびに作り直されるので中身がリセットされるので再接続しても同じものが使われるように外側に以下の処理を移します。またブラウザーから来た音声を Gemini へ直接送らず、いったん audio_queue に入れる変更をします。
+```python
+await audio_queue.put(pcm)
+```
+put(pcm) は、受け取った音声データを順番待ちの箱に入れる、という意味です。
+次に順番待ちの audio_queue から音声を取り出し、Gemini に送る担当を追加します。
+```python
+  async def audio_to_gemini():
+            while True:
+                pcm = await audio_queue.get()
+                await session.send_realtime_input(
+                    audio=types.Blob(
+                        data=pcm,
+                        mime_type="audio/pcm;rate=16000",
+                    )
+                )
+```
+次に以下の処理に新しい処理を追加します。
+```python
+        task_a = asyncio.create_task(frontend_to_gemini())
+        task_b = asyncio.create_task(gemini_to_frontend())
+        await asyncio.wait({task_a, task_b}, return_when=asyncio.FIRST_COMPLETED)
+        task_a.cancel()
+        task_b.cancel()
+```
+これに以下の行を追加します。
+```python
+ task_c = asyncio.create_task(audio_to_gemini())
+ ```
+このタスクCは音声をキューから取り出してGeminiへ送る処理になります。
+全体の形は以下のようになります。
+```python
+     task_a = asyncio.create_task(frontend_to_gemini())
+        task_b = asyncio.create_task(gemini_to_frontend())
+        task_c = asyncio.create_task(audio_to_gemini())
+        await asyncio.wait({task_a, task_b,task_c}, return_when=asyncio.FIRST_COMPLETED)
+        task_a.cancel()
+        task_b.cancel()
+        task_c.cancel()
+```
+
 
 ### 2026/
 常に初期設定を参照して、会話内容に反映させるようにします。例えば初期設定が「あなたはAIエンジニアのインターンシップの面接官です。AIエンジニアのインターンシップで問われる質問を随時質問してください。そして最終的には僕の合否と理由を述べてください」と入力すれば、例えば話が逸れても、途中で初期設定のうち面接の段階がどの段階まで来たかを確認し、次の質問にいけるようにします。

@@ -3,7 +3,7 @@ uvicorn[standard]
 websockets
 python-dotenv
 truststore
-google-genai
+google-genai==2.34.0
 azure-cognitiveservices-speech
 pyjwt[crypto]
 openai

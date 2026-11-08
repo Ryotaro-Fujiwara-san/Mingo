@@ -6989,6 +6989,7 @@ put(pcm) は、受け取った音声データを順番待ちの箱に入れる�
                     )
                 )
 ```
+これによりfrontend_to_gemini()でブラウザーから音声を受け取り、audio_queue に入れ、audio_to_gemini()でaudio_queue から音声を取り出し、Gemini に送ります。
 次に以下の処理に新しい処理を追加します。
 ```python
         task_a = asyncio.create_task(frontend_to_gemini())
@@ -7012,7 +7013,67 @@ put(pcm) は、受け取った音声データを順番待ちの箱に入れる�
         task_b.cancel()
         task_c.cancel()
 ```
+まず全体の流れはfrontend_to_gemini()が音声を継続して受信します。
+次にGeminiに接続し、audio_to_gemini が音声を送り、gemini_to_frontend が返事を受け取ります。
+もしGeminiの接続が切れたら、audio_to_gemini が音声を送り、gemini_to_frontend が返事を受け取る処理を止め、ブラウザーから来た音声はfrontend_to_geminiを継続して起動して音声はキュー（audio_queue）で待たせます。そして保存したハンドルを使って新しい接続用にaudio_to_gemini が音声を送り、gemini_to_frontend が返事を受け取る処理を再開し、キュー（audio_queue）の音声をGeminiに送り会話を継続します。もしブラウザーとの接続が切れた場合はすべての処理を中止します。
 
+まずfrontend_to_gemini() を、Gemini の接続の外で動かします。これにより、Gemini が切れている間もブラウザーから音声を受け取り、audio_queue に入れられるようにします。
+
+```python
+async def frontend_to_gemini():
+        nonlocal frontend_disconnected
+        try:
+            while True:
+                raw = await websocket.receive_text()#メッセージを受け取る
+                msg = json.loads(raw)#辞書化して見れる形にする
+                if msg.get("type") == "input_audio_buffer.append":#フロントからの送信が音声である場合
+                    pcm = base64.b64decode(msg["audio"])#メッセージの中の音声部分msg["audio"]を、生バイトに戻す
+                    audio_buffer.extend(pcm)
+                    await audio_queue.put(pcm)
+        except WebSocketDisconnect:#切れたら止める
+            frontend_disconnected = True
+            pass
+            
+    task_a = asyncio.create_task(frontend_to_gemini())
+    
+    async with client.aio.live.connect(model = MODEL,config = gemini_config) as session:
+
+```
+次にGeminiが切れた場合とブラウザーが切れた場合の処理を分けます。
+```python
+ done,pending=await asyncio.wait({task_a, task_b,task_c}, return_when=asyncio.FIRST_COMPLETED)
+```
+doneには終了した処理が、pendingにはまだ動いている処理が入ります。
+さらにfrontend_disconnectedがFalse（つまりブラウザーが切れていない）間はasync with client.aio.live.connect(model = MODEL,config = gemini_config) as session:が起動を継続するようにします。
+
+```python
+ while not frontend_disconnected:
+        async with client.aio.live.connect(model = MODEL,config = gemini_config) as session:
+```
+さらにハンドルを接続するたびにGeminiから最新のハンドルを受け取れるようにします。
+```python
+while not frontend_disconnected:
+        gemini_config["session_resumption"] = types.SessionResumptionConfig(
+            handle=resumption_handle,
+        )
+        async with client.aio.live.connect(model = MODEL,config = gemini_config) as session:
+```
+また古いGeminiの接続の処理が停止するまで待ちます。
+```python
+ task_b.cancel()
+            task_c.cancel()
+            results = await asyncio.gather(task_b,task_c,return_exceptions=True)
+```
+await asyncio.gather(...) は２つが停止するまで待ちます。これで、古い処理を片付けてから再接続に進めます。
+
+またエラーの状態を記録します。
+```python
+ for result in results:
+                if isinstance(result, Exception):
+                    print("Gemini送受信エラー",type(result).__name__, result)
+            if task_a in done:
+                task_a.result()
+```
 
 ### 2026/
 常に初期設定を参照して、会話内容に反映させるようにします。例えば初期設定が「あなたはAIエンジニアのインターンシップの面接官です。AIエンジニアのインターンシップで問われる質問を随時質問してください。そして最終的には僕の合否と理由を述べてください」と入力すれば、例えば話が逸れても、途中で初期設定のうち面接の段階がどの段階まで来たかを確認し、次の質問にいけるようにします。

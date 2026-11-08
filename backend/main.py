@@ -9,22 +9,63 @@ import base64#フロントのbase64音声を生バイトに戻す
 import truststore
 import sqlite3#SQLiteのライブラリ
 import math#平方根などの計算用
-from watchdog.events import FileSystemEventHandler#ファイルの変化を自動認識するライブラリ
 truststore.inject_into_ssl()
-from watchdog.observers import Observer
 
 from dotenv import load_dotenv
 
 from pydantic import BaseModel #型チェックの土台を取り出す。これがあるおかげで自動でJSONがチェックされる。
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect,Response,Depends,HTTPException,Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect,Response,Depends,HTTPException,Request,UploadFile,File
 from auth import get_current_user, verify_token#作成したauth.pyから検査係を取り出す
 from fastapi.middleware.cors import CORSMiddleware#CORSの許可を取る 
 from google import genai#Geminiと話すSDK
 from openai import OpenAI#OpenAIと話すSDK
 from google.genai import types #Blobなどの型
-from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage#Claudeに対する操作
+from anthropic import AsyncAnthropic
 from fastapi.staticfiles import StaticFiles
 
+#== PDFについてClaudeに質問する ==#
+async def ask_claude_about_pdf(pdf_bytes: bytes, question: str):
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    async with AsyncAnthropic(api_key=api_key) as claude:
+        uploaded = await claude.files.upload(file=("setup.pdf",pdf_bytes,"application/pdf"))
+        file_id = uploaded.id
+
+        try:
+            response = await claude.messages.create(
+                model = "claude-sonnet-4-6",
+                max_tokens = 1024,
+                messages = [
+                    {
+                        "role": "user", # Claude に質問・依頼を送る側
+                        "content":[
+                            {
+                                "type":"document",
+                                "source":{
+                                    "type":"file",
+                                    "file_id":file_id,
+                                },
+                            },
+                            {
+                                "type":"text",
+                                "text":question
+                            },
+                          ],
+                    }
+                ],
+            )
+        finally:
+            await claude.files.delete(file_id)
+        answer = "\n".join(
+            block.text for block in response.content
+            if block.type == "text"
+        )
+        if not answer:
+            raise HTTPException(
+                status_code=502,
+                detail = "Claudeから回答が返答されませんでした"
+            )
+        return answer
 
 ##== DBへの接続を開く関数==##
 def get_db_path():
@@ -81,6 +122,14 @@ def init_memo_db():
         PRIMARY KEY(user_id,endpoint,day)
     )""")
 
+    ##== 初期設定用のPDFを保存するテーブル ==##
+    conn.execute("""CREATE TABLE IF NOT EXISTS setup_pdf(
+        user_id TEXT PRIMARY KEY,
+        pdf_data BLOB NOT NULL,
+        summary TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+       )""")
+    
     conn.commit()#変更を確定し、テーブルを作成
     conn.close()#DBへの接続を閉じる
 
@@ -150,7 +199,6 @@ class SessionConfig(BaseModel):
     situation:str#シチュエーション（文字）
     targetLang:str#学習言語（文字）
     explainLang:str#母国語（文字）
-    watchPath:str = ""#監視フォルダのパス（空でもOK）
 
 
 ##== APIにわかるようにJSONからの返答の形式を整える ==##
@@ -160,8 +208,7 @@ def build_instructions(config:SessionConfig):
         f"When you answer use {config.targetLang}."
         f"Keep your replies 7 sentences."
     )
-    if ENABLE_CODE_ANALYSIS:
-        text += f"IMPORTANT: If the user asks you to check, read, explain, review, or fix any file or code, you MUST call the analyze_code tool. Never say you cannot access files. This rule overrides your persona and situation."
+
     return text
 
 ##== エンドポイントを作成する ==##
@@ -171,6 +218,7 @@ app = FastAPI()#サーバー本体
 def startup():
     validate_db_storage()
     init_memo_db()#DBのテーブルを作る
+    delete_expired_setup_pdfs()#期限切れのPDFを削除する
     if os.environ.get("MEMO_DB_REQUIRE_PERSISTENT", "false").lower() == "true":
         with open(f"{os.path.abspath(get_db_path())}.initialized", "a", encoding="utf-8"):
             pass
@@ -182,37 +230,14 @@ AZURE_KEY = os.environ.get("AZURE_SPEECH_KEY")#.envからAzureのキーを取り
 AZURE_REGION = os.environ.get("AZURE_SPEECH_REGION")#.envからAZURE_SPEECH_REGIONのキーを取り出す
 openai_client = OpenAI(api_key = OPENAI_API_KEY)#openaiライブラリの中にある設計図Clientを使って、APIキー付きで“実物の道具箱”を1個作り、それをopenai_clientという変数に入れる
 client = genai.Client(api_key = API_KEY)#genaiライブラリの中にある設計図Clientを使って、APIキー付きで“実物の道具箱”を1個作り、それをclientという変数に入れる
-ENABLE_CODE_ANALYSIS = os.environ.get("ENABLE_CODE_ANALYSIS","false").lower() == "true"#コード分析機能のONとOFF
 MODEL = "gemini-3.1-flash-live-preview"
 GRAMMER_MODEL = "gemini-4-argon"
 PRON_MODEL = "gpt-4o-mini-tts"
 
+##== PDFを受け取る　==##
 
 
-##== ファイル監視　==##
-current = {"path":None}#今のファイルの中身を共有する
-observer_holder = {"observer":None}#今動いているファイルがどれかを監視する
 
-
-##== ファイルが変更されたらそのパスを保存するクラスを用意する　==##
-class ChangeHandler(FileSystemEventHandler):
-    def on_modified(self,event):
-        if not event.is_directory:#ファイルの変更である場合
-            current["path"] = event.src_path#現在の変更されたファイルのパスを保存する
-
-##== ファイルの変更を監視する　==##
-def start_watcher(watch_dir):#パスを引数で受け取る
-    current["folder"] = watch_dir#作業フォルダを保存
-    if not watch_dir:#パスが空なら何もしない
-        return
-    old = observer_holder["observer"]#前のオブザーバーを保存する
-
-    if old:#前のオブザーバーがあれば、それを停止する
-        old.stop()
-    observer = Observer()#watchdogが用意したカメラの設計図（クラス）を実体化し、後で使えるようにする。
-    observer.schedule(ChangeHandler(),path=watch_dir,recursive=True)#渡されたパスを監視し、サブフォルダまでrecursive=Trueにより見張らせる。またChangeHandler()により変更が起きたらon_modifiedを実行する。
-    observer.start()#監視開始
-    observer_holder["observer"] = observer#今のオブザーバーを保存する
 
 
 ##== アドバイス関数を司令する関数 ==##
@@ -401,6 +426,93 @@ def judge_used(utterance,expressions):
     )
     return json.loads(response.text).get("used",[])#実際に使われた表現
 
+#== 初期設定用PDFについてClaudeに確認する ==#
+async def consult_setup_pdf(user_id:str,question:str):
+    setup_pdf = get_setup_pdf(user_id)
+    if not setup_pdf:
+        return"PDFが見つかりません"
+    pdf_bytes = setup_pdf[0]
+    answer = await ask_claude_about_pdf(
+        pdf_bytes,
+        question,
+    )
+    return answer
+
+#== 保存から24時間を過ぎたPDFを削除する ==#
+def delete_expired_setup_pdfs():
+    conn = get_conn()
+
+    try:
+        conn.execute(
+            """
+            DELETE FROM setup_pdf
+            WHERE created_at <= datetime('now', '-24 hours')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+#== 保存した初期設定用PDFと要約を取得する ==#
+def get_setup_pdf(user_id:str):
+    conn = get_conn()
+    try:
+       row = conn.execute(
+        """
+        SELECT pdf_data, summary
+            FROM setup_pdf
+            WHERE user_id = ?
+              AND created_at > datetime('now', '-24 hours')
+        """,
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row
+
+#== 初期設定用のPDFを受け取る ==#
+@app.post("/setup_pdf")
+async def receive_setup_pdf(
+    file:UploadFile = File(...),
+    user:dict = Depends(get_current_user),
+):
+    pdf_bytes = await file.read()
+
+    if not pdf_bytes.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=400,
+            detail="PDFファイルではありません"
+        )
+
+    user_id = user["sub"]
+
+    summary = await ask_claude_about_pdf(
+        pdf_bytes, 
+        (
+            "このPDFを会話の初期設定に使います。"
+            "役割、状況、重要な条件、用語を簡潔にまとめてください。"
+            "PDFに書かれていないことは推測しないでください。"
+        ),
+    )
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO setup_pdf(user_id,pdf_data,summary)
+            VALUES(?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                pdf_data = excluded.pdf_data,
+                summary = excluded.summary,
+                created_at = datetime('now')
+            """,
+            (user_id, pdf_bytes, summary),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"summary": summary}
+
 #== ヘルスチェック ==#
 @app.get("/health")
 def health():
@@ -498,19 +610,18 @@ def delete_memo(item:DeleteIn,user:dict = Depends(get_current_user)):
     conn.close()
     return{"status":"deleted"}
 
-    
-##== コード分析ツールを定義する ==##
-CODE_TOOL = types.Tool(
+#== 初期設定用PDFの確認ツールを定義する ==#
+PDF_TOOL = types.Tool(
     function_declarations=[#ライブラリがリストにしろと決めているため、リストの形式にする
         types.FunctionDeclaration(
-            name = "analyze_code",#実行したい関数
-            description ="ユーザーが今作業中のファイル（コード・README・設定ファイル等）の確認・説明・修正・要約を頼んだら必ず呼ぶ。ファイルの中身は自分で読めるので『アクセスできない』とは言わず必ずこのツールを使う。",
+            name = "consult_setup_pdf",#実行したい関数
+            description ="初期設定用PDFについて詳しく確認するツール、またユーザーがPDFの内容を確認するよう求めた場合や要約だけでは分からない場合に呼び出す",
             parameters = types.Schema(#関数データがどんな形かを表す設計図を書く
                 type = types.Type.OBJECT,#これは固定された書き方であり、OBJECT形式(辞書）で渡すようにする
                 properties = {
-                    "request":types.Schema(#さらにその関数の引数のデータがどんな形かを表す設計図を各
+                    "request":types.Schema(#さらにその関数の引数のデータがどんな形かを表す設計図を書く
                         type = types.Type.STRING,#STRING形式（文字）で渡すようにする
-                        description = "ユーザーがしてほしいこと"
+                        description = "PDFについて確認したい質問"
                     ),
                 },
             ),#実行したい関数の引数の様式を決定する
@@ -518,44 +629,10 @@ CODE_TOOL = types.Tool(
     ]
 )
 
-##== コード分析をClaudeに依頼する関数 ==##
-async def analyze_code(request,lang):
-    path = current["path"]
-    if path:
-        folder = os.path.dirname(path)#os.path.dirname()は「ファイルのパスから、入っているフォルダを取り出す」定型文
-    else:
-        folder = current.get("folder")#無ければ入力した作業フォルダ
-    if not folder:#どちらも無ければ終了
-        return{"summary":"作業フォルダがありません。","code":""}
-    if not ENABLE_CODE_ANALYSIS:
-        return{"summary":"あなたにはコード分析は使えません。","code":""}
 
-    prompt = (
-            f"ファイル{path}について次の依頼に答えて:{request}\n"
-            f"コード内のコメントは必ず{lang}で書くこと\n"
-            f"必ず次のJSON形式だけで答えること（前後に他の文字を書かない）:\n"
-            f'{{"summary":"音声で話すための短い要約。コードは絶対に入れない","code":"コードや具体的な変更点。特に該当ファイルの何行を変更すべきか具体的に無ければ空文字"}}'
-    )
-    options = ClaudeAgentOptions(
-            cwd = folder,#Claudeが探索するフォルダ
-            allowed_tools = ["Read","Grep","Glob"],#読むことだけ許可する
-            permission_mode="bypassPermissions",#毎回確認は出さない
-            max_turns = 20,#思考往復の上限
-    )
 
-    try:
-        text = ""
-        async for message in query(prompt = prompt,options = options):#プロンプトとオプションを送信し、返答を一個ずつmessageへ取り出す
-            if isinstance(message,ResultMessage):#取り出した内容の種類が、Claudeが返答した思考軌跡ではなく最終結論なら
-                text = message.result#最終結果をtextに格納
-        start = text.find("{")#JSONの始まり
-        end = text.rfind("}")#JSONの終わり
-        data = json.loads(text[start:end+1])#{}部分のみJSONに変換
-        return {"summary":data.get("summary",""),"code":data.get("code","")}#返答が無ければ""を返答する
-    except Exception as e :
-        import traceback; traceback.print_exc()#全トレースバックをターミナルに出す
-        cause = getattr(e, "__cause__", None)#SDKが包む前の“本当の例外”
-        return{"summary":f"分析エラー:{type(e).__name__}|原因:{type(cause).__name__}:{cause}","code":""}
+
+
 
 #== 入力文を解析して役割・文法・意味を返す関数 ==#
 def analyze_grammar(text,target_lang,explain_lang,context=""):
@@ -625,117 +702,168 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
     await websocket.accept()#接続を受け入れる
     first = await websocket.receive_text()#最初のメッセージを受け取り、first変数に入れる
     config = SessionConfig(**json.loads(first))
-    if ENABLE_CODE_ANALYSIS:
-       start_watcher(config.watchPath)#UIで指定した作業フォルダを監視する。
+    setup_pdf = get_setup_pdf(user["sub"])
+   
     instructions = build_instructions(config)#指示文を作る
-
+    if setup_pdf:
+        summary = setup_pdf[1]
+        instructions += f"\n初期設定用PDFの要約: {summary}"
     gemini_config = {
         "response_modalities":["AUDIO"],#返事を音声にする
+        "context_window_compression":types.ContextWindowCompressionConfig(
+            sliding_window = types.SlidingWindow(),
+        ),
         "system_instruction":instructions,#指示文を入れる
         "input_audio_transcription":{"language_codes":[config.targetLang]},#自分の発言を文字起こしする
         "output_audio_transcription":{},#AIの発言を文字起こしする
     }
-    if ENABLE_CODE_ANALYSIS:
-        gemini_config["tools"] = [CODE_TOOL]
+    
+    tools = []
+    if setup_pdf:
+        tools.append(PDF_TOOL)
+    if tools:
+        gemini_config["tools"] = tools
     print("文字起こし言語",gemini_config["input_audio_transcription"])
-    async with client.aio.live.connect(model = MODEL,config = gemini_config) as session:
-        audio_buffer = bytearray()#音声用のリスト
+    resumption_handle = None
+    frontend_disconnected = False
+   
+    audio_queue:asyncio.Queue[bytes] = asyncio.Queue()#音声用のリスト（ブラウザーから届いた音声を一時的に預ける「順番待ちの箱」）
+    audio_buffer = bytearray()#音声用のリスト
 
-        async def frontend_to_gemini():
-            try:
+    async def frontend_to_gemini():
+        nonlocal frontend_disconnected
+        try:
+            while True:
+                raw = await websocket.receive_text()#メッセージを受け取る
+                msg = json.loads(raw)#辞書化して見れる形にする
+                if msg.get("type") == "input_audio_buffer.append":#フロントからの送信が音声である場合
+                    pcm = base64.b64decode(msg["audio"])#メッセージの中の音声部分msg["audio"]を、生バイトに戻す
+                    audio_buffer.extend(pcm)
+                    await audio_queue.put(pcm)
+        except WebSocketDisconnect:#切れたら止める
+            frontend_disconnected = True
+            pass
+            
+    task_a = asyncio.create_task(frontend_to_gemini())
+    while not frontend_disconnected:
+        gemini_config["session_resumption"] = types.SessionResumptionConfig(
+            handle=resumption_handle,
+        )
+        async with client.aio.live.connect(model = MODEL,config = gemini_config) as session:
+            
+
+            
+
+            async def audio_to_gemini():
                 while True:
-                    raw = await websocket.receive_text()#メッセージを受け取る
-                    msg = json.loads(raw)#辞書化して見れる形にする
-                    if msg.get("type") == "input_audio_buffer.append":#フロントからの送信が音声である場合
-                        pcm = base64.b64decode(msg["audio"])#メッセージの中の音声部分msg["audio"]を、生バイトに戻す
-                        audio_buffer.extend(pcm)
-                        await session.send_realtime_input(
-                            audio = types.Blob(data=pcm,mime_type="audio/pcm;rate=16000")
+                    pcm = await audio_queue.get()
+                    await session.send_realtime_input(
+                        audio=types.Blob(
+                            data=pcm,
+                            mime_type="audio/pcm;rate=16000",
                         )
-            except WebSocketDisconnect:#切れたら止める
-                pass
+                    )
 
-        async def gemini_to_frontend():
-            user_text = ""#自分の発言を貯める
-            ai_text = ""#AIの発言を貯める
-            try:
-                while True:
-                    async for response in session.receive():
-                        if response.tool_call:#コード分析関数の実行要求が来たか検知する
-                            print("デバック")
-                            print("デバックの中身",response.tool_call.function_calls)
-                            responses = []#Geminiに結果を送信する
+            async def gemini_to_frontend():
+                nonlocal resumption_handle
+                user_text = ""#自分の発言を貯める
+                ai_text = ""#AIの発言を貯める
+                try:
+                    while True:
+                        async for response in session.receive():
+                            if response.session_resumption_update:
+                                update = response.session_resumption_update
+                                if update.resumable and update.new_handle:
+                                    resumption_handle = update.new_handle
+                            if response.tool_call:#PDF解析関数の実行要求が来たか検知する
+                                responses = []#Geminiに結果を送信する
 
-                            for fc in response.tool_call.function_calls:#実行要求を一つ一つ実行
-                                print("デバック2")
-                                result = await analyze_code(fc.args.get("request",""),config.targetLang)
-                                print("analyze結果（デバック）",result)
-                                if result["code"]:#返答にコードがあればフロントに送信
-                                    await websocket.send_text(json.dumps({
-                                        "type":"code_analysis",#フロント表示用
-                                        "code":result["code"],
-                                    }))
-                                responses.append(types.FunctionResponse(
-                                    id=fc.id,#どの実行要求に対する返事か
-                                    name = fc.name,
-                                    response={"result": result["summary"]},
-                                ))
+                                for fc in response.tool_call.function_calls:#実行要求を一つ一つ実行
+                                    if fc.name != "consult_setup_pdf":
+                                        result = "不明なツールです。"
+                                    else:
+                                        question = (fc.args or {}).get("request")
+
+                                        if not isinstance(question, str) or not question.strip():
+                                            result = "PDFについての質問が指定されていません。"
+                                        else:
+                                            result = await consult_setup_pdf(
+                                                user["sub"],
+                                                question,
+                                            )
+                                    responses.append(types.FunctionResponse(
+                                        id=fc.id,#どの実行要求に対する返事か
+                                        name = fc.name,
+                                        response={"result": result},
+                                    ))
                                 await session.send_tool_response(function_responses=responses)#Geminiに要約を返す
                                 continue
-                        if response.data is not None:#何か音声があれば以下を実行する
-                            b64 = base64.b64encode(response.data).decode()#バイトをbase64に直す
-                            await websocket.send_text(json.dumps({
-                                "type":"response.output_audio.delta",
-                                "delta":b64,
-                            }))
-                        sc = response.server_content
-                        
-                        if sc is None:#文字情報が無ければ、そのまま飛ばして継続
-                            continue
-                        if sc.input_transcription and sc.input_transcription.text:#そもそも文字起こしがあり、その中に文字があれば、自分の発言を貯める
-                            user_text += sc.input_transcription.text
-                            turn_id = str(time.time())#この発言のID
-                            utterance_audio=bytes(audio_buffer)#この発言の音声をコピー
-                            audio_buffer.clear()#次の発言用に空にする
-                            await websocket.send_text(json.dumps({
-                                    "type":"conversation.item.input_audio_transcription.completed",
-                                    "transcript":user_text,
-                                    "id":turn_id,
-                            }))
-                            asyncio.create_task(analyze_turn(user_text,utterance_audio,websocket,config,turn_id))
+                            if response.go_away:
+                                print("Geminiから接続終了の予告:", response.go_away.time_left)
+                            if response.data is not None:#何か音声があれば以下を実行する
+                                b64 = base64.b64encode(response.data).decode()#バイトをbase64に直す
+                                await websocket.send_text(json.dumps({
+                                    "type":"response.output_audio.delta",
+                                    "delta":b64,
+                                }))
+                            sc = response.server_content
+                            
+                            if sc is None:#文字情報が無ければ、そのまま飛ばして継続
+                                continue
+                            if sc.input_transcription and sc.input_transcription.text:#そもそも文字起こしがあり、その中に文字があれば、自分の発言を貯める
+                                user_text += sc.input_transcription.text
+                                turn_id = str(time.time())#この発言のID
+                                utterance_audio=bytes(audio_buffer)#この発言の音声をコピー
+                                audio_buffer.clear()#次の発言用に空にする
+                                await websocket.send_text(json.dumps({
+                                        "type":"conversation.item.input_audio_transcription.completed",
+                                        "transcript":user_text,
+                                        "id":turn_id,
+                                }))
+                                asyncio.create_task(analyze_turn(user_text,utterance_audio,websocket,config,turn_id))
 
-                        if sc.output_transcription and sc.output_transcription.text:#AIの発言に文字起こしがあり、その中に文字があれば、AIの発言を貯める
-                            ai_text += sc.output_transcription.text
-                            await websocket.send_text(json.dumps({
-                                    "type":"response.output_audio_transcript.done",
-                                    "transcript":ai_text,
-                            }))
-                        if sc.interrupted:#ユーザーが途中で割り込んだら
-                            await websocket.send_text(json.dumps({
-                                    "type":"interrupted",
-                                    "transcript":ai_text,
-                            })) 
-                            ai_text=""#途中で切れたのでリセット
+                            if sc.output_transcription and sc.output_transcription.text:#AIの発言に文字起こしがあり、その中に文字があれば、AIの発言を貯める
+                                ai_text += sc.output_transcription.text
+                                await websocket.send_text(json.dumps({
+                                        "type":"response.output_audio_transcript.done",
+                                        "transcript":ai_text,
+                                }))
+                            if sc.interrupted:#ユーザーが途中で割り込んだら
+                                await websocket.send_text(json.dumps({
+                                        "type":"interrupted",
+                                        "transcript":ai_text,
+                                })) 
+                                ai_text=""#途中で切れたのでリセット
 
-                        if sc.turn_complete:#一区切りが完了したら
-                            await websocket.send_text(json.dumps({
-                                    "type":"response.output_audio_transcript.finish",
-                                    "transcript":ai_text,
-                            }))
-                            user_text = ""#リセットする
-                            ai_text=""#リセットする
-                            audio_buffer.clear()#AIの返事ぶんの音声を捨てる（次の発話をきれいに録るため）
-            except Exception as e:
-                print("gemini_to_frontend エラー",e) 
+                            if sc.turn_complete:#一区切りが完了したら
+                                await websocket.send_text(json.dumps({
+                                        "type":"response.output_audio_transcript.finish",
+                                        "transcript":ai_text,
+                                }))
+                                user_text = ""#リセットする
+                                ai_text=""#リセットする
+                                audio_buffer.clear()#AIの返事ぶんの音声を捨てる（次の発話をきれいに録るため）
+                except Exception as e:
+                    print("gemini_to_frontend エラー",e) 
+                    
 
 
 
 
-        task_a = asyncio.create_task(frontend_to_gemini())
-        task_b = asyncio.create_task(gemini_to_frontend())
-        await asyncio.wait({task_a, task_b}, return_when=asyncio.FIRST_COMPLETED)
-        task_a.cancel()
-        task_b.cancel()
+            
+            task_b = asyncio.create_task(gemini_to_frontend())
+            task_c = asyncio.create_task(audio_to_gemini())
+            done,pending=await asyncio.wait({task_a, task_b,task_c}, return_when=asyncio.FIRST_COMPLETED)
+
+            task_b.cancel()
+            task_c.cancel()
+            results = await asyncio.gather(task_b,task_c,return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    print("Gemini送受信エラー",type(result).__name__, result)
+            if task_a in done:
+                task_a.result()
+    task_a.cancel()
 
 #==ビルドしたReactの画面を配る==#
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__),"..","frontend","dist")

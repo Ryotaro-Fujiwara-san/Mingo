@@ -70,7 +70,6 @@ function App(){
   const[liveAI,setLiveAI] = useState("");//今流れているAIの文字
   const[messages,setMessages] = useState<{who:string,text:string,grammar?:any,pron?:any,id?:string,code?:string}[]>([]);//会話の履歴を保存
   const[memoText,setMemoText] = useState('')//メモ表現を入力する。
-  const[watchPath,setWatchPath] =useState('')//監視するフォルダのパスを入力する。
   const[example,setExample] = useState("");//ヒントの表現を保存し、表示する。
   const[view,setView] =useState("main");//メモの進捗ダッシュボードタブと会話タブを切り替える
   const[dash,setDash] = useState<any>(null);//ダッシュボードのデータ
@@ -80,15 +79,15 @@ function App(){
   const shownHintsRef = useRef<string[]>([]);//ヒントで見せた表現を保存する
   const lastYouRef = useRef<string|null>(null);//最後に処理したYou発言のid
   const trackIdRef = useRef("t0");//AI音声のトラック
-  const pendingCodeRef = useRef("");//コードを一時的に保存する
   const [grammarInput,setGrammarInput] = useState('')//文法検索の入力文
   const [grammarResult,setGrammarResult] = useState<any>(null)//文法検索の解析結果
   const[pronInput,setPronInput] = useState('')//発音検索の入力文
   const[pronSpeed,setPronSpeed] = useState(1)//読み上げ速度
- 
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+
 //== 確定ボタンを押したら初期設定が送信される関数 ==//
   function startConversation(){
-    const config = {role,situation,targetLang,explainLang,watchPath};
+    const config = {role,situation,targetLang,explainLang};
     //①今のページがhttps（PC）ならwss、それ以外（AWS）ならwsにします
     const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
 
@@ -106,9 +105,7 @@ function App(){
     ws.onmessage = (e) => {//メッセージが届き次第実行する
       const msg = JSON.parse(e.data);//parseは文字列をオブジェクトに変更する
       
-      if(msg.type === "code_analysis"){//コード分析が必要な時
-         setMessages(prev => [...prev,{who:"AI",text:"Code",code:msg.code}]);
-      }
+    
 
       if(msg.type === "response.output_audio.delta"){//AIの音声
         const buf = base64ToArrayBuffer(msg.delta);//声を音声データに戻したもの
@@ -148,6 +145,22 @@ function App(){
       }
     }
   }
+
+//== 初期設定用PDFをアップロードする ==//
+async function uploadPdf(pdfFile: File){
+  if (!pdfFile) {
+    alert("PDFを選択してください");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file",pdfFile);
+  const res = await api("/setup_pdf",{
+    method: "POST",
+    body: formData,
+  });
+  const data = await res.json();
+  alert("PDFの要約:\n"+data.summary);
+}
 
 //==全てのfetchにJWTを付ける関数==//
 async function api(path:string,init:RequestInit={}) {
@@ -251,7 +264,7 @@ async  function startRecording(){//関数内でawaitを使うため、asyncを�
     }
 
     if(recorder.getStatus()!== "recording"){
-        await recorder.record((data)=>{
+        await recorder.record((data: { mono: ArrayBuffer })=>{
           sendAudio(data.mono);//monoはチャンネル数は１本とすることを明示し、音の塊を送る
         });
     }
@@ -339,10 +352,22 @@ return(
 
 <input value={role} onChange = {(e) => setRole(e.target.value)} placeholder = "AIの属性"/>
 <input value={situation} onChange = {(e) => setSituation(e.target.value)} placeholder = "シチュエーション"/>
-{import.meta.env.VITE_ENABLE_CODE_ANALYSIS === "true" &&(
-<input value={watchPath} onChange = {(e) => setWatchPath(e.target.value)} placeholder = "作業・監視したいパス"/>
-)}
-
+<label>
+  初期設定用PDF:
+  <input
+    type="file"
+    accept=".pdf,application/pdf"
+    onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}//選ばれたファイルのうち、一つ目を取り出します。
+  />
+</label>
+<button
+  disabled={!pdfFile}
+  onClick={() => {
+    if (pdfFile) uploadPdf(pdfFile);
+  }}
+>
+  PDFをアップロード
+</button>
 
 <label>
 学習言語:
@@ -382,9 +407,7 @@ return(
       borderRadius:"12px",//角を丸く
     }}>
       {m.text}
-      {m.code &&(
-       <pre style={{margin:"4px 0 0",overflowX:"auto",whiteSpace:"pre-wrap",fontSize:"13px"}}>{m.code}</pre>
-      )}
+     
       {m.grammar && (
         <div style={{marginTop:"4px",fontSize:"13px"}}>
           {m.grammar.correct

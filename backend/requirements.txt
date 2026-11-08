@@ -10,3 +10,5 @@ openai
 watchdog
 claude-agent-sdk
 psycopg[binary]
+anthropic
+python-multipart

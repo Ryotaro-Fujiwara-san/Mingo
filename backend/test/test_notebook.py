@@ -62,11 +62,13 @@ def test_analyze_code_can_return_a_suggestion_without_a_notebook(monkeypatch):
         lambda _: pytest.fail("No notebook URL should skip notebook download"),
     )
 
-    result = asyncio.run(main.analyze_code("", "Add code to print 1"))
+    result = asyncio.run(main.analyze_code("", "Add code to print 1", "en"))
 
     assert result["suggested_code"] == "print(1)"
     assert result["code"] == ""
     assert "Add code to print 1" in captured["prompt"]
+    assert "suggested_codeを空にせず" in captured["prompt"]
+    assert "summaryはEnglishで" in captured["prompt"]
 
 
 @pytest.mark.parametrize("needs_claude", [True, False])

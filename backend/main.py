@@ -673,6 +673,13 @@ async def analyze_colab_code(notebookUrl:str,question:str):
             }],
         )
     text = next(block.text for block in reversed(response.content) if block.type == "text")
+    print(
+    "Claude応答確認:",
+    "文字数=", len(text),
+    "コードブロック形式=", text.lstrip().startswith("```"),
+    "終了理由=", response.stop_reason,
+    flush=True,
+    )
     return json.loads(text)
 
 

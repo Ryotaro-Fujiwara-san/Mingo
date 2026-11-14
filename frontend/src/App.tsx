@@ -109,8 +109,8 @@ function App(){
     }
     ws.onmessage = (e) => {//メッセージが届き次第実行する
       const msg = JSON.parse(e.data);//parseは文字列をオブジェクトに変更する
-      
-    
+
+
       if(msg.type === "code_answer"){//AIコード回答
         const id = crypto.randomUUID(); // 新しいIDを生成
         pendingCodeIdRef.current = id; // 保留中のColabコードのIDを保存
@@ -356,7 +356,7 @@ useEffect(() => {
   const lastYou = youMessages[youMessages.length-1];//直近の自分の発言
   if(lastYou && (lastYou.id !== lastYouRef.current)){//直近で自分の発言があり、直近の発言のIDが新しければ（新しい発言ならば）
     lastYouRef.current = lastYou.id ?? null;//lastYouRef.current を lastYou.idで更新する。もしIDがなければ少なくともnullが入る
-    recordInteraction(lastYou.text); 
+    recordInteraction(lastYou.text);
   }
 },[messages])//新しいYou発言（messages）が増えたら動く
 

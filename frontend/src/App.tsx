@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { WavRecorder,WavStreamPlayer } from "wavtools";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";//コードを色分けして表示
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";//VS Codeのダークテーマ
 import{useAuth} from 'react-oidc-context'
 //== 言語選択におけるオブジェクトをリストに並べたもの ==//
 const LANGUAGE =[
@@ -84,10 +86,13 @@ function App(){
   const[pronInput,setPronInput] = useState('')//発音検索の入力文
   const[pronSpeed,setPronSpeed] = useState(1)//読み上げ速度
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const[notebookUrl,setNotebookUrl] = useState('')//ノートブックのURL
+  const [colabCode, setColabCode] = useState<string | null>(null);//Colabコードの内容
+  const pendingCodeIdRef = useRef<string | null>(null);//保留中のColabコードのID
 
 //== 確定ボタンを押したら初期設定が送信される関数 ==//
   function startConversation(){
-    const config = {role,situation,targetLang,explainLang};
+    const config = {role,situation,targetLang,explainLang,notebookUrl};
     //①今のページがhttps（PC）ならwss、それ以外（AWS）ならwsにします
     const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
 
@@ -106,7 +111,12 @@ function App(){
       const msg = JSON.parse(e.data);//parseは文字列をオブジェクトに変更する
       
     
-
+      if(msg.type === "colab_code"){//Colabコードの解析結果
+        const id = crypto.randomUUID(); // 新しいIDを生成
+        pendingCodeIdRef.current = id; // 保留中のColabコードのIDを保存
+        setColabCode(msg.code);
+        setMessages(prev => [...prev,{who:"AI",text:"",code:msg.code,id}]);
+      }
       if(msg.type === "response.output_audio.delta"){//AIの音声
         const buf = base64ToArrayBuffer(msg.delta);//声を音声データに戻したもの
         playerRef.current.add16BitPCM(buf,trackIdRef.current);//再生機にその音声データを渡してその場で再生する
@@ -121,8 +131,16 @@ function App(){
       }
 
       if(msg.type === "response.output_audio_transcript.finish"){//AIの発言が完了したら、リアルタイムの文字起こしを履歴に保存し、リアルタイム表示をリセットする
-               setMessages(prev => [...prev,{who:"AI",text:msg.transcript}]);//AIの会話履歴をコード以外保存する
-       setLiveAI("");//リアルタイムの文字起こしをリセットする
+        const codeID = pendingCodeIdRef.current;
+        if(codeID){
+          setMessages(prev =>
+            prev.map(m => m.id === codeID ? {...m,text:msg.transcript} : m)
+          );
+          pendingCodeIdRef.current = null; // 保留中のColabコードのIDをリセット
+        }else{
+          setMessages(prev => [...prev,{who:"AI",text:msg.transcript}]);//AIの会話履歴をコード以外保存する
+        }
+        setLiveAI("");//リアルタイムの文字起こしをリセットする
       }
 
       if(msg.type === "grammar_feedback"){//文法チェックが必要な時
@@ -138,7 +156,13 @@ function App(){
       if(msg.type === "interrupted"){//割り込んだ時
         playerRef.current ?. interrupt()//correntがnullなら何もしないが、それ以外なら溜まった音声を捨てる
         trackIdRef.current = "t" + Date.now();//更新のたびに時間を更新して入力し、新しいトラックにする
-        if(msg.transcript){//途中までAI音声が何かしゃべっていたら
+        const codeID = pendingCodeIdRef.current;
+        if(codeID){
+          setMessages(prev =>
+            prev.map(m => m.id === codeID ? {...m,text:msg.transcript} : m)
+          );
+          pendingCodeIdRef.current = null; // 保留中のColabコードのIDをリセット
+        }else if(msg.transcript){//途中までAI音声が何かしゃべっていたら
           setMessages(prev => [...prev,{who:"AI",text:msg.transcript}]);//履歴に保存する
         }
         setLiveAI("");//リアルタイムの文字起こしをリセットする
@@ -353,6 +377,14 @@ return(
 <input value={role} onChange = {(e) => setRole(e.target.value)} placeholder = "AIの属性"/>
 <input value={situation} onChange = {(e) => setSituation(e.target.value)} placeholder = "シチュエーション"/>
 <label>
+  Colabノートの共有URL:
+  <input
+    type="text"
+    value={notebookUrl}
+    onChange={(e) => setNotebookUrl(e.target.value)}
+  />
+</label>
+<label>
   初期設定用PDF:
   <input
     type="file"
@@ -396,7 +428,14 @@ return(
   </button>
 </label>
 <button onClick={startConversation}>確定</button>
-<button onClick={() => setMessages([])}>履歴を削除</button>
+<button onClick={
+  () => {
+    pendingCodeIdRef.current = null;
+    setMessages([])
+  }
+}>
+    履歴を削除
+</button>
   <div style = {{display:"flex",flexDirection:"column",gap:"8px",width:"100%"}}>
     {messages.map((m,i) => (
     <div key={i} style={{
@@ -406,6 +445,11 @@ return(
       padding:"8px 12px",//上下8px,左右12px
       borderRadius:"12px",//角を丸く
     }}>
+      {m.code&&(
+        <SyntaxHighlighter language="python" style={vscDarkPlus} showLineNumbers>
+          {m.code}
+        </SyntaxHighlighter>
+      )}
       {m.text}
      
       {m.grammar && (

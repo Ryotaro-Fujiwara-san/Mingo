@@ -91,6 +91,7 @@ def get_conn():
 ##== メモ・ヒント機能用のテーブルを作る関数を定義 ==##
 def init_memo_db():
     conn = get_conn()
+
     ##== メモ・ヒント機能用のDBを定義 ==##
     conn.execute("""CREATE TABLE IF NOT EXISTS memo_item(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +200,7 @@ class SessionConfig(BaseModel):
     situation:str#シチュエーション（文字）
     targetLang:str#学習言語（文字）
     explainLang:str#母国語（文字）
+    notebookUrl:str#Colabノートの共有URL（文字）
 
 
 ##== APIにわかるようにJSONからの返答の形式を整える ==##
@@ -629,8 +631,49 @@ PDF_TOOL = types.Tool(
     ]
 )
 
+#== Colabのコードを解析できるツールを定義する ==#
+COLAB_TOOL = types.Tool(
+    function_declarations=[#ライブラリがリストにしろと決めているため、リストの形式にする
+        types.FunctionDeclaration(
+            name = "analyze_colab_code",#実行したい関数
+            description ="ユーザーがColabノートのコードについて質問した場合や、コードを確認する必要がある場合に使う",
+            parameters = types.Schema(#関数データがどんな形かを表す設計図を書く
+                type = types.Type.OBJECT,#これは固定された書き方であり、OBJECT形式(辞書）で渡すようにする
+                properties = {
+                    "request":types.Schema(#さらにその関数の引数のデータがどんな形かを表す設計図を書く
+                        type = types.Type.STRING,#STRING形式（文字）で渡すようにする
+                        description = "Colabノートのコードについて確認したい質問"
+                    ),
+                },
+            ),#実行したい関数の引数の様式を決定する
+        )
+    ]
+)
 
-
+#== コード解析関数 ==#
+async def analyze_colab_code(notebookUrl:str,question:str):
+    async with AsyncAnthropic() as claude:
+        response = await claude.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=2000,
+            messages = [{
+                "role":"user",
+                "content":(
+                    f"このノートを読んでください:{notebookUrl}\n"
+                    f"質問:{question}\n"
+                    'JSONだけで返してください: {"status":"ok", "summary":"解説", "code":"コード"}\n'
+                    '読めない場合は {"status":"error", "summary":"理由", "code":""} と返してください。'
+                ),
+            }],
+            tools = [{
+                "type":"web_fetch_20250910",# Web fetchツールのタイプを指定
+                "name": "web_fetch",
+                "max_uses": 1,
+                "allowed_domains": ["colab.research.google.com"],# 許可するドメインをColabノートに限定する
+            }],
+        )
+    text = next(block.text for block in reversed(response.content) if block.type == "text")
+    return json.loads(text)
 
 
 
@@ -708,6 +751,8 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
     if setup_pdf:
         summary = setup_pdf[1]
         instructions += f"\n初期設定用PDFの要約: {summary}"
+    if config.notebookUrl.strip():
+        instructions += f"\nコード解析ツールの結果を受け取ったら、その解説をもとにユーザーの質問に音声で答えてください。コードそのものは読み上げないでください"
     gemini_config = {
         "response_modalities":["AUDIO"],#返事を音声にする
         "context_window_compression":types.ContextWindowCompressionConfig(
@@ -721,6 +766,8 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
     tools = []
     if setup_pdf:
         tools.append(PDF_TOOL)
+    if config.notebookUrl.strip():# ノートブックURLが空でない場合、COLAB_TOOLを追加する
+        tools.append(COLAB_TOOL)
     if tools:
         gemini_config["tools"] = tools
     print("文字起こし言語",gemini_config["input_audio_transcription"])
@@ -775,25 +822,39 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                 update = response.session_resumption_update
                                 if update.resumable and update.new_handle:
                                     resumption_handle = update.new_handle
-                            if response.tool_call:#PDF解析関数の実行要求が来たか検知する
+                            if response.tool_call:#外部関数の実行要求が来たか検知する
                                 responses = []#Geminiに結果を送信する
 
-                                for fc in response.tool_call.function_calls:#実行要求を一つ一つ実行
-                                    if fc.name != "consult_setup_pdf":
-                                        result = "不明なツールです。"
-                                    else:
-                                        question = (fc.args or {}).get("request")
+                                for fc in response.tool_call.function_calls:
+                                    question = (fc.args or {}).get("request")
 
+                                    if fc.name == "consult_setup_pdf":
                                         if not isinstance(question, str) or not question.strip():
                                             result = "PDFについての質問が指定されていません。"
                                         else:
-                                            result = await consult_setup_pdf(
-                                                user["sub"],
-                                                question,
-                                            )
+                                            result = await consult_setup_pdf(user["sub"], question)
+
+                                    elif fc.name == "analyze_colab_code":
+                                        if not isinstance(question, str) or not question.strip():
+                                            result = "コードについての質問が指定されていません。"
+                                        else:
+                                            analysis = await analyze_colab_code(config.notebookUrl, question)
+
+                                            if analysis["status"] == "ok":
+                                                await websocket.send_text(json.dumps({
+                                                    "type": "colab_code",
+                                                    "code": analysis["code"],
+                                                }))
+                                                result = analysis["summary"]
+                                            else:
+                                                result = analysis["summary"]
+
+                                    else:
+                                        result = "不明なツールです。"
+
                                     responses.append(types.FunctionResponse(
-                                        id=fc.id,#どの実行要求に対する返事か
-                                        name = fc.name,
+                                        id=fc.id,
+                                        name=fc.name,
                                         response={"result": result},
                                     ))
                                 await session.send_tool_response(function_responses=responses)#Geminiに要約を返す

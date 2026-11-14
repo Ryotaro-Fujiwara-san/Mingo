@@ -767,6 +767,44 @@ async def analyze_code(notebookUrl:str,question:str,response_language:str="en"):
     return result
 
 
+async def send_code_answer(websocket, notebook_url, question, response_language):
+    try:
+        if not await classify_code_request(question):
+            return
+        analysis = await analyze_code(notebook_url, question, response_language)
+    except Exception as exc:
+        print("コード解析エラー", repr(exc), flush=True)
+        analysis = {
+            "code": "",
+            "suggested_code": "",
+            "summary": "コード解析中にエラーが発生しました。もう一度お試しください。",
+        }
+
+    await websocket.send_text(json.dumps({
+        "type": "code_answer",
+        "code": analysis.get("code", ""),
+        "suggestedCode": analysis.get("suggested_code", ""),
+        "summary": analysis.get("summary", ""),
+    }))
+
+
+def _log_code_answer_task_result(task):
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        print("コード回答送信エラー", repr(exc), flush=True)
+
+
+def schedule_code_answer(websocket, notebook_url, question, response_language):
+    task = asyncio.create_task(
+        send_code_answer(websocket, notebook_url, question, response_language)
+    )
+    task.add_done_callback(_log_code_answer_task_result)
+    return task
+
+
 
 #== 入力文を解析して役割・文法・意味を返す関数 ==#
 def analyze_grammar(text,target_lang,explain_lang,context=""):
@@ -909,6 +947,18 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                 user_text = ""#自分の発言を貯める
                 ai_text = ""#AIの発言を貯める
                 code_question_checked = False
+
+                def schedule_code_request():
+                    nonlocal code_question_checked
+                    if not code_question_checked and user_text.strip():
+                        code_question_checked = True
+                        schedule_code_answer(
+                            websocket,
+                            config.notebookUrl,
+                            user_text,
+                            config.targetLang,
+                        )
+
                 try:
                     while True:
                         async for response in session.receive():
@@ -952,19 +1002,6 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                         "id":turn_id,
                                 }))
                                 asyncio.create_task(analyze_turn(user_text,utterance_audio,websocket,config,turn_id))
-                                if not code_question_checked and await classify_code_request(user_text):
-                                    code_question_checked = True
-                                    analysis = await analyze_code(
-                                        config.notebookUrl,
-                                        user_text,
-                                        config.targetLang,
-                                    )
-                                    await websocket.send_text(json.dumps({
-                                        "type": "code_answer",
-                                        "code": analysis["code"],
-                                        "suggestedCode": analysis.get("suggested_code", ""),
-                                        "summary": analysis["summary"],
-                                    }))
 
                             if response.data is not None:#何か音声があれば以下を実行する
                                 b64 = base64.b64encode(response.data).decode()#バイトをbase64に直したもの
@@ -987,6 +1024,7 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                         "type":"interrupted",
                                         "transcript":ai_text,
                                 })) 
+                                schedule_code_request()
                                 ai_text=""#途中で切れたのでリセット
 
                             if sc.turn_complete:#一区切りが完了したら
@@ -994,6 +1032,7 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                         "type":"response.output_audio_transcript.finish",
                                         "transcript":ai_text,
                                 }))
+                                schedule_code_request()
                                 user_text = ""#リセットする
                                 ai_text=""#リセットする
                                 code_question_checked = False

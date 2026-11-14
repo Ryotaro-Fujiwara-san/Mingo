@@ -111,3 +111,64 @@ def test_classify_code_request_routes_explicit_code_requests_without_gemini(
     monkeypatch.setattr(main, "client", fake_client)
 
     assert asyncio.run(main.classify_code_request(question)) is True
+
+
+def test_schedule_code_answer_does_not_block_audio_forwarding(monkeypatch):
+    async def scenario():
+        classification_started = asyncio.Event()
+        allow_classification = asyncio.Event()
+        analysis_started = asyncio.Event()
+        allow_analysis = asyncio.Event()
+
+        async def delayed_classification(_):
+            classification_started.set()
+            await allow_classification.wait()
+            return True
+
+        async def delayed_analysis(*_):
+            analysis_started.set()
+            await allow_analysis.wait()
+            return {
+                "code": "",
+                "suggested_code": "print(1)",
+                "summary": "追加します。",
+            }
+
+        class FakeWebSocket:
+            def __init__(self):
+                self.messages = []
+
+            async def send_text(self, message):
+                self.messages.append(json.loads(message))
+
+        monkeypatch.setattr(main, "classify_code_request", delayed_classification)
+        monkeypatch.setattr(main, "analyze_code", delayed_analysis)
+        websocket = FakeWebSocket()
+
+        task = main.schedule_code_answer(websocket, "", "Write Python code", "en")
+
+        await classification_started.wait()
+        await websocket.send_text(json.dumps({
+            "type": "response.output_audio.delta",
+            "delta": "audio-during-classification",
+        }))
+        assert websocket.messages[-1]["type"] == "response.output_audio.delta"
+
+        allow_classification.set()
+        await analysis_started.wait()
+        await websocket.send_text(json.dumps({
+            "type": "response.output_audio.delta",
+            "delta": "audio-during-analysis",
+        }))
+        assert websocket.messages[-1]["type"] == "response.output_audio.delta"
+
+        allow_analysis.set()
+        await task
+        assert websocket.messages[-1] == {
+            "type": "code_answer",
+            "code": "",
+            "suggestedCode": "print(1)",
+            "summary": "追加します。",
+        }
+
+    asyncio.run(scenario())

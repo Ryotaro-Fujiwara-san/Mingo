@@ -680,6 +680,11 @@ async def analyze_colab_code(notebookUrl:str,question:str):
     "終了理由=", response.stop_reason,
     flush=True,
     )
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines[-1].strip() == "```":
+            text = "\n".join(lines[1:-1])
     return json.loads(text)
 
 

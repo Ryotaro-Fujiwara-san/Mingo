@@ -82,6 +82,30 @@ def test_classify_code_request_returns_model_decision(monkeypatch, needs_claude)
     )
     monkeypatch.setattr(main, "client", fake_client)
 
-    result = asyncio.run(main.classify_code_request("Explain this function"))
+    result = asyncio.run(
+        main.classify_code_request("Tell me about the design choices here")
+    )
 
     assert result is needs_claude
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "I need you to show me some of your Python code.",
+        "I need to you to represent some your represent some Python code.",
+    ],
+)
+def test_classify_code_request_routes_explicit_code_requests_without_gemini(
+    monkeypatch, question
+):
+    class FakeModels:
+        async def generate_content(self, **kwargs):
+            pytest.fail("Explicit code requests should not need model classification")
+
+    fake_client = SimpleNamespace(
+        aio=SimpleNamespace(models=FakeModels())
+    )
+    monkeypatch.setattr(main, "client", fake_client)
+
+    assert asyncio.run(main.classify_code_request(question)) is True

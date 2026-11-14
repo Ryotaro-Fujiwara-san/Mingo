@@ -669,10 +669,25 @@ def download_colab_notebook(notebook_url: str) -> dict:
 
 
 #== 発話がコードを読む・書く依頼か判定する ==#
+_CODE_REQUEST_ACTION = re.compile(
+    r"\b(?:show|display|write|provide|give|generate|create|make|implement|add|fix|debug|explain|review|analyze|analyse|modify|edit|represent)\b",
+    re.IGNORECASE,
+)
+_CODE_REQUEST_TOPIC = re.compile(
+    r"\b(?:code|python|javascript|typescript|java|ruby|rust|sql|script|program|function|class|algorithm)\b",
+    re.IGNORECASE,
+)
+
+
 async def classify_code_request(question: str) -> bool:
+    if _CODE_REQUEST_ACTION.search(question) and _CODE_REQUEST_TOPIC.search(question):
+        return True
+
     prompt = (
         "ユーザーの依頼が、コードの読み取り・説明・生成・追加・修正・デバッグを"
-        "求めているか判定してください。通常の雑談や語学学習はfalseです。\n"
+        "求めているか判定してください。通常の雑談や語学学習はfalseです。"
+        "「Show me some Python code」のようにコードを見せる依頼はtrueです。"
+        "文法ミスや単語の重複があっても、依頼の意図で判定してください。\n"
         'JSONだけで返してください: {"needs_claude": true} または {"needs_claude": false}\n'
         f"依頼:{question}"
     )

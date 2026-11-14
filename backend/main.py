@@ -634,26 +634,7 @@ PDF_TOOL = types.Tool(
     ]
 )
 
-#== コードを解析・生成するツールを定義する ==#
-CODE_TOOL = types.Tool(
-    function_declarations=[#ライブラリがリストにしろと決めているため、リストの形式にする
-        types.FunctionDeclaration(
-            name = "analyze_code",#実行したい関数
-            description ="コードの追加・修正、または具体的なコード例が役立つプログラミング質問に使う。Colab URLが設定されている場合はノートのコードも解析する",
-            parameters = types.Schema(#関数データがどんな形かを表す設計図を書く
-                type = types.Type.OBJECT,#これは固定された書き方であり、OBJECT形式(辞書）で渡すようにする
-                properties = {
-                    "request":types.Schema(#さらにその関数の引数のデータがどんな形かを表す設計図を書く
-                        type = types.Type.STRING,#STRING形式（文字）で渡すようにする
-                        description = "ユーザーのプログラミング上の質問と、必要なコード変更の依頼"
-                    ),
-                },
-            ),#実行したい関数の引数の様式を決定する
-        )
-    ]
-)
-
-#== コード解析関数 ==#
+#== Colab共有URLからノートを取得する ==#
 def download_colab_notebook(notebook_url: str) -> dict:
     parsed = urlparse(notebook_url)
     if (
@@ -685,6 +666,25 @@ def download_colab_notebook(notebook_url: str) -> dict:
         raise ValueError("取得したファイルは有効なColabノートではありません")
 
     return notebook
+
+
+#== 発話がコードを読む・書く依頼か判定する ==#
+async def classify_code_request(question: str) -> bool:
+    prompt = (
+        "ユーザーの依頼が、コードの読み取り・説明・生成・追加・修正・デバッグを"
+        "求めているか判定してください。通常の雑談や語学学習はfalseです。\n"
+        'JSONだけで返してください: {"needs_claude": true} または {"needs_claude": false}\n'
+        f"依頼:{question}"
+    )
+    response = await client.aio.models.generate_content(
+        model=GRAMMER_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0,
+        ),
+    )
+    return json.loads(response.text)["needs_claude"]
 
 
 async def analyze_code(notebookUrl:str,question:str):
@@ -823,11 +823,10 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
         summary = setup_pdf[1]
         instructions += f"\n初期設定用PDFの要約: {summary}"
     instructions += (
-        "\nコードの追加・修正、または具体的なコード例が役立つプログラミング質問には、"
-        "必ずanalyze_codeツールを使ってください。"
-        "Colab URLが設定されている場合はノートのコードも解析に含めてください。"
-        "ツールが提案コードを返した場合、そのコードはチャット欄に表示されます。"
-        "『コードは表示できない』とは言わず、音声では追加場所や理由を説明し、コード全文は読み上げないでください。"
+        "\nコードに関する依頼はバックエンドが判定してClaudeに送ります。"
+        "Claudeが返した提案コードはチャット欄に表示されます。"
+        "『コードは表示できない』とは言わず、音声ではコードの要点や使い方を説明してください。"
+        "コード全文は読み上げないでください。"
     )
     gemini_config = {
         "response_modalities":["AUDIO"],#返事を音声にする
@@ -842,7 +841,6 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
     tools = []
     if setup_pdf:
         tools.append(PDF_TOOL)
-    tools.append(CODE_TOOL)
     if tools:
         gemini_config["tools"] = tools
     print("文字起こし言語",gemini_config["input_audio_transcription"])
@@ -890,6 +888,7 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                 nonlocal resumption_handle
                 user_text = ""#自分の発言を貯める
                 ai_text = ""#AIの発言を貯める
+                code_question_checked = False
                 try:
                     while True:
                         async for response in session.receive():
@@ -909,25 +908,6 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                         else:
                                             result = await consult_setup_pdf(user["sub"], question)
 
-                                    elif fc.name == "analyze_code":
-                                        if not isinstance(question, str) or not question.strip():
-                                            result = "コードについての質問が指定されていません。"
-                                        else:
-                                            analysis = await analyze_code(config.notebookUrl, question)
-
-                                            if analysis["status"] == "ok":
-                                                if analysis["code"] or analysis["suggested_code"]:
-                                                    await websocket.send_text(json.dumps({
-                                                        "type": "code_answer",
-                                                        "code": analysis["code"],
-                                                        "suggestedCode": analysis["suggested_code"],
-                                                    }))
-                                                result = analysis["summary"]
-                                                if analysis["suggested_code"]:
-                                                    result += "\n提案コードはチャット欄に表示しました。音声では追加場所と理由を説明し、コード全文は読み上げないでください。"
-                                            else:
-                                                result = analysis["summary"]
-
                                     else:
                                         result = "不明なツールです。"
 
@@ -940,17 +920,8 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                 continue
                             if response.go_away:
                                 print("Geminiから接続終了の予告:", response.go_away.time_left)
-                            if response.data is not None:#何か音声があれば以下を実行する
-                                b64 = base64.b64encode(response.data).decode()#バイトをbase64に直す
-                                await websocket.send_text(json.dumps({
-                                    "type":"response.output_audio.delta",
-                                    "delta":b64,
-                                }))
                             sc = response.server_content
-                            
-                            if sc is None:#文字情報が無ければ、そのまま飛ばして継続
-                                continue
-                            if sc.input_transcription and sc.input_transcription.text:#そもそも文字起こしがあり、その中に文字があれば、自分の発言を貯める
+                            if sc and sc.input_transcription and sc.input_transcription.text:
                                 user_text += sc.input_transcription.text
                                 turn_id = str(time.time())#この発言のID
                                 utterance_audio=bytes(audio_buffer)#この発言の音声をコピー
@@ -961,6 +932,25 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                         "id":turn_id,
                                 }))
                                 asyncio.create_task(analyze_turn(user_text,utterance_audio,websocket,config,turn_id))
+                                if not code_question_checked and await classify_code_request(user_text):
+                                    code_question_checked = True
+                                    analysis = await analyze_code(config.notebookUrl, user_text)
+                                    await websocket.send_text(json.dumps({
+                                        "type": "code_answer",
+                                        "code": analysis["code"],
+                                        "suggestedCode": analysis.get("suggested_code", ""),
+                                        "summary": analysis["summary"],
+                                    }))
+
+                            if response.data is not None:#何か音声があれば以下を実行する
+                                b64 = base64.b64encode(response.data).decode()#バイトをbase64に直したもの
+                                await websocket.send_text(json.dumps({
+                                    "type":"response.output_audio.delta",
+                                    "delta":b64,
+                                }))
+
+                            if sc is None:#文字情報が無ければ、そのまま飛ばして継続
+                                continue
 
                             if sc.output_transcription and sc.output_transcription.text:#AIの発言に文字起こしがあり、その中に文字があれば、AIの発言を貯める
                                 ai_text += sc.output_transcription.text
@@ -982,6 +972,7 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                 }))
                                 user_text = ""#リセットする
                                 ai_text=""#リセットする
+                                code_question_checked = False
                                 audio_buffer.clear()#AIの返事ぶんの音声を捨てる（次の発話をきれいに録るため）
                 except Exception as e:
                     print("gemini_to_frontend エラー",e) 

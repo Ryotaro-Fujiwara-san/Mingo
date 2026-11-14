@@ -814,7 +814,12 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
         summary = setup_pdf[1]
         instructions += f"\n初期設定用PDFの要約: {summary}"
     if config.notebookUrl.strip():
-        instructions += f"\nコード解析ツールの結果を受け取ったら、その解説をもとにユーザーの質問に音声で答えてください。コードそのものは読み上げないでください"
+        instructions += (
+            "\nColabノートのコードに関する質問や、コードの追加・修正を求められたら、"
+            "必ずanalyze_colab_codeツールを使ってください。"
+            "追加・修正コードはチャット欄に表示されるので、『コードは表示できない』とは言わないでください。"
+            "ツールの解説をもとに、どこに何を追加するかを音声で説明し、コード全文は読み上げないでください。"
+        )
     gemini_config = {
         "response_modalities":["AUDIO"],#返事を音声にする
         "context_window_compression":types.ContextWindowCompressionConfig(
@@ -909,6 +914,8 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                                     "suggestedCode": analysis["suggested_code"],
                                                 }))
                                                 result = analysis["summary"]
+                                                if analysis["suggested_code"]:
+                                                    result += "\n提案コードはチャット欄に表示しました。音声では追加場所と理由を説明し、コード全文は読み上げないでください。"
                                             else:
                                                 result = analysis["summary"]
 

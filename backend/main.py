@@ -954,7 +954,6 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                 asyncio.create_task(analyze_turn(user_text,utterance_audio,websocket,config,turn_id))
                                 if not code_question_checked and await classify_code_request(user_text):
                                     code_question_checked = True
-                                    ai_text = ""
                                     analysis = await analyze_code(
                                         config.notebookUrl,
                                         user_text,
@@ -967,7 +966,7 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                                         "summary": analysis["summary"],
                                     }))
 
-                            if response.data is not None and not code_question_checked:#何か音声があれば以下を実行する
+                            if response.data is not None:#何か音声があれば以下を実行する
                                 b64 = base64.b64encode(response.data).decode()#バイトをbase64に直したもの
                                 await websocket.send_text(json.dumps({
                                     "type":"response.output_audio.delta",
@@ -977,7 +976,7 @@ async def realtime(websocket:WebSocket,token:str = ""): #エンドポイント�
                             if sc is None:#文字情報が無ければ、そのまま飛ばして継続
                                 continue
 
-                            if sc.output_transcription and sc.output_transcription.text and not code_question_checked:#AIの発言に文字起こしがあり、その中に文字があれば、AIの発言を貯める
+                            if sc.output_transcription and sc.output_transcription.text:#AIの発言に文字起こしがあり、その中に文字があれば、AIの発言を貯める
                                 ai_text += sc.output_transcription.text
                                 await websocket.send_text(json.dumps({
                                         "type":"response.output_audio_transcript.done",

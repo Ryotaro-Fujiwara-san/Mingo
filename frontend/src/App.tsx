@@ -70,7 +70,7 @@ function App(){
   const[explainLang,setExplainLang] =  useState('ja')//説明に使用する言語を設定する。初期状態は日本語
   const[micOn,setMicOn] = useState(true)//マイクをオンにする。初期状態はON
   const[liveAI,setLiveAI] = useState("");//今流れているAIの文字
-  const[messages,setMessages] = useState<{who:string,text:string,grammar?:any,pron?:any,id?:string,code?:string,suggestedCode?:string}[]>([]);//会話の履歴を保存
+  const[messages,setMessages] = useState<{who:string,text:string,grammar?:any,pron?:any,id?:string,code?:string,suggestedCode?:string,analysisSummary?:string}[]>([]);//会話の履歴を保存
   const[memoText,setMemoText] = useState('')//メモ表現を入力する。
   const[example,setExample] = useState("");//ヒントの表現を保存し、表示する。
   const[view,setView] =useState("main");//メモの進捗ダッシュボードタブと会話タブを切り替える
@@ -111,7 +111,7 @@ function App(){
       const msg = JSON.parse(e.data);//parseは文字列をオブジェクトに変更する
       
     
-      if(msg.type === "colab_code"){//Colabコードの解析結果
+      if(msg.type === "code_answer"){//AIコード回答
         const id = crypto.randomUUID(); // 新しいIDを生成
         pendingCodeIdRef.current = id; // 保留中のColabコードのIDを保存
         setColabCode(msg.code);
@@ -120,6 +120,7 @@ function App(){
           text:"",
           code:msg.code,
           suggestedCode:msg.suggestedCode,
+          analysisSummary:msg.summary,
           id,
         }]);
       }
@@ -467,6 +468,7 @@ return(
           </SyntaxHighlighter>
         </div>
       )}
+      {m.analysisSummary&&<div>{m.analysisSummary}</div>}
       {m.text}
      
       {m.grammar && (

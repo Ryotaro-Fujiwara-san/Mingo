@@ -70,7 +70,7 @@ function App(){
   const[explainLang,setExplainLang] =  useState('ja')//説明に使用する言語を設定する。初期状態は日本語
   const[micOn,setMicOn] = useState(true)//マイクをオンにする。初期状態はON
   const[liveAI,setLiveAI] = useState("");//今流れているAIの文字
-  const[messages,setMessages] = useState<{who:string,text:string,grammar?:any,pron?:any,id?:string,code?:string}[]>([]);//会話の履歴を保存
+  const[messages,setMessages] = useState<{who:string,text:string,grammar?:any,pron?:any,id?:string,code?:string,suggestedCode?:string}[]>([]);//会話の履歴を保存
   const[memoText,setMemoText] = useState('')//メモ表現を入力する。
   const[example,setExample] = useState("");//ヒントの表現を保存し、表示する。
   const[view,setView] =useState("main");//メモの進捗ダッシュボードタブと会話タブを切り替える
@@ -115,7 +115,13 @@ function App(){
         const id = crypto.randomUUID(); // 新しいIDを生成
         pendingCodeIdRef.current = id; // 保留中のColabコードのIDを保存
         setColabCode(msg.code);
-        setMessages(prev => [...prev,{who:"AI",text:"",code:msg.code,id}]);
+        setMessages(prev => [...prev,{
+          who:"AI",
+          text:"",
+          code:msg.code,
+          suggestedCode:msg.suggestedCode,
+          id,
+        }]);
       }
       if(msg.type === "response.output_audio.delta"){//AIの音声
         const buf = base64ToArrayBuffer(msg.delta);//声を音声データに戻したもの
@@ -446,9 +452,20 @@ return(
       borderRadius:"12px",//角を丸く
     }}>
       {m.code&&(
-        <SyntaxHighlighter language="python" style={vscDarkPlus} showLineNumbers>
-          {m.code}
-        </SyntaxHighlighter>
+        <div>
+          <div>ノートの元コード</div>
+          <SyntaxHighlighter language="python" style={vscDarkPlus} showLineNumbers>
+            {m.code}
+          </SyntaxHighlighter>
+        </div>
+      )}
+      {m.suggestedCode&&(
+        <div>
+          <div>追加・修正するコード</div>
+          <SyntaxHighlighter language="python" style={vscDarkPlus} showLineNumbers>
+            {m.suggestedCode}
+          </SyntaxHighlighter>
+        </div>
       )}
       {m.text}
      

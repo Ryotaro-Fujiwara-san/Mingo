@@ -7075,12 +7075,60 @@ await asyncio.gather(...) は２つが停止するまで待ちます。これで
                 task_a.result()
 ```
 
-### 2026/
-ユーザーのGoogle Colabにアプリが同期できるようにし、同じように会話中に適切なタイミングで参照されるようにします。ユーザーはアプリからできるだけ簡単にGoogle Colabに同期できるようにします。さらにコードも出力されるようにし、コード部分だけ別枠で表示されるようにします。解析やコード出力にはclaudeを使用します。
+### 2026/11/13(Google Colabとの連携）
 
-
-
-
+まず、ノートの共有URLを入力
+→ 会話中にGeminiが必要と判断
+→ 最新のコードを取得
+→ Claudeが解析
+→ 解説と色付きコードを表示（コードの部分のみは別枠で先に出力されるようにする）
+という流れを実現します。
+まずフロントでURLを入力する欄を追加します。
+次にGeminiに「Colabのコードを解析できるツールがある」と教える定義を作ります。
+```python
+COLAB_TOOL = types.Tool(
+    function_declarations=[#ライブラリがリストにしろと決めているため、リストの形式にする
+        types.FunctionDeclaration(
+            name = "analyze_colab_code",#実行したい関数
+            description ="ユーザーがColabノートのコードについて質問した場合や、コードを確認する必要がある場合に使う",
+            parameters = types.Schema(#関数データがどんな形かを表す設計図を書く
+                type = types.Type.OBJECT,#これは固定された書き方であり、OBJECT形式(辞書）で渡すようにする
+                properties = {
+                    "request":types.Schema(#さらにその関数の引数のデータがどんな形かを表す設計図を書く
+                        type = types.Type.STRING,#STRING形式（文字）で渡すようにする
+                        description = "Colabノートのコードについて確認したい質問"
+                    ),
+                },
+            ),#実行したい関数の引数の様式を決定する
+        )
+    ]
+)
+```
+次にURLを取得してコードとそのコードに対する解説を返答する関数を実装します。
+```python
+async def analyze_colab_code(notebookUrl:str,question:str):
+    async with AsyncAnthropic() as claude:
+        response = await claude.messages.create(
+            model="claude-opus-4-6",
+            messages = [{
+                "role":"user",
+                "content":(
+                    f"このノートを読んでください":{notebook_url}\n"
+                    f"質問:{question}\n"
+                    'JSONだけで返してください:{"status:"ok,"summary":"解説", "code":"コード"}\n'
+                    '読めない場合は {"status":"error", "summary":"理由", "code":""} と返してください。'
+                ),
+            }],
+            tools = [{
+                "type":"web_fetch_20250910",# Web fetchツールのタイプを指定
+                "name": "web_fetch",
+                "max_uses": 1,
+                "allowed_domains": ["colab.research.google.com"],# 許可するドメインをColabノートに限定する
+            }],
+        )
+    text = next(block.text for block in reversed(response.content) if block.type == "text")
+    return json.loads(text)
+```
 
 ## 引用 / References
 
